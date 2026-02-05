@@ -23,6 +23,10 @@ export interface InvokeOptions {
   timeoutMsOverride?: number;
   /** Restrict available tools. Empty string disables all tools. */
   allowedTools?: string;
+  /** Called whenever the child process produces stdout/stderr output — useful for activity tracking */
+  onActivity?: () => void;
+  /** Called with raw output chunks from stdout/stderr — useful for feeding output to the agent registry */
+  onOutput?: (chunk: string) => void;
 }
 
 export async function invokeClaude(opts: InvokeOptions): Promise<ClaudeResult> {
@@ -88,11 +92,17 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
     let stderr = "";
 
     proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      opts.onActivity?.();
+      opts.onOutput?.(text);
     });
 
     proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      opts.onActivity?.();
+      opts.onOutput?.(text);
     });
 
     // Timeout (0 = no timeout)
@@ -204,43 +214,108 @@ function extractResult(data: any): ClaudeResult {
     if (text) {
       return { result: text, sessionId: "", isError: false };
     }
+    logger.warn({ responseData: data }, "extractResult: array response had no text content");
     return { result: "No readable response from Claude.", sessionId: "", isError: true };
   }
 
-  // Handle known subtypes that don't produce readable text
-  if (data.subtype === "errormaxturns") {
+  // Helper to extract common metadata fields
+  const sessionId = data.sessionid || data.session_id || "";
+  const costUsd = data.totalcostusd || data.total_cost_usd || data.cost_usd;
+  const duration = data.durationms || data.duration_ms;
+  const isError = data.is_error || data.iserror || false;
+  const subtype = data.subtype || data.stop_reason || data.stopreason || "";
+
+  // Handle known error/non-standard subtypes
+  if (subtype === "error_max_turns") {
     const turns = data.numturns || data.num_turns || "unknown";
-    const cost = data.totalcostusd || data.total_cost_usd || data.cost_usd;
-    const costStr = cost ? ` (cost: $${Number(cost).toFixed(2)})` : "";
+    const costStr = costUsd ? ` (cost: $${Number(costUsd).toFixed(2)})` : "";
+    logger.warn({ subtype, turns, sessionId, costUsd }, "extractResult: max turns reached");
     return {
-      result: `Claude reached the maximum number of turns (${turns}) for this request${costStr}. The work may be partially complete — try asking about the current state or continue the conversation.`,
-      sessionId: data.sessionid || data.session_id || "",
-      costUsd: cost,
-      duration: data.durationms || data.duration_ms,
+      result: `The task was too complex to complete in the allowed number of turns (${turns})${costStr}. Try breaking it into smaller steps or continue the conversation.`,
+      sessionId,
+      costUsd,
+      duration,
       isError: false,
     };
   }
 
-  // Handle single result object — prefer readable text, never fall through to raw JSON
+  if (subtype.startsWith("error")) {
+    // Catch-all for any error subtype (error_tool_use, error_*, etc.)
+    const errorDetail = data.error || data.message || "";
+    const friendlyDetail = errorDetail ? `: ${String(errorDetail).slice(0, 200)}` : "";
+    logger.warn({ subtype, sessionId, errorDetail, responseKeys: Object.keys(data) }, "extractResult: error subtype response");
+    return {
+      result: `Claude encountered an error (${subtype})${friendlyDetail}. The task may be partially complete.`,
+      sessionId,
+      costUsd,
+      duration,
+      isError: true,
+    };
+  }
+
+  // Handle single result object — prefer readable text
   const result = data.result || data.content;
 
   if (!result) {
     // No readable content — generate a friendly message based on what we know
-    const subtype = data.subtype || data.type || "unknown";
+    const typeInfo = subtype || data.type || "unknown";
+    logger.warn({ subtype: typeInfo, sessionId, responseKeys: Object.keys(data) }, "extractResult: no result/content field in response");
     return {
-      result: `Claude finished but returned no readable text (type: ${subtype}). The task may still have been completed.`,
-      sessionId: data.sessionid || data.session_id || "",
-      costUsd: data.totalcostusd || data.total_cost_usd || data.cost_usd,
-      duration: data.durationms || data.duration_ms,
-      isError: data.is_error || data.iserror || false,
+      result: `Task completed but the response could not be parsed (type: ${typeInfo}). The task may still have been completed — check logs for details.`,
+      sessionId,
+      costUsd,
+      duration,
+      isError,
+    };
+  }
+
+  // Extract text from result, handling both string and structured content block formats
+  const resultText = extractText(result);
+
+  if (!resultText) {
+    logger.warn({ resultType: typeof result, sessionId, isArray: Array.isArray(result) }, "extractResult: result field present but no text could be extracted");
+    return {
+      result: "Task completed but the response contained no readable text. Check logs for details.",
+      sessionId,
+      costUsd,
+      duration,
+      isError,
     };
   }
 
   return {
-    result: typeof result === "string" ? result : JSON.stringify(result),
-    sessionId: data.sessionid || data.session_id || "",
-    costUsd: data.totalcostusd || data.total_cost_usd || data.cost_usd,
-    duration: data.durationms || data.duration_ms,
-    isError: data.is_error || data.iserror || false,
+    result: resultText,
+    sessionId,
+    costUsd,
+    duration,
+    isError,
   };
+}
+
+/** Extract readable text from a result field that may be a string, content block array, or other structure. */
+function extractText(result: any): string {
+  if (typeof result === "string") {
+    return result;
+  }
+
+  // Handle array of content blocks: [{type: "text", text: "..."}, ...]
+  if (Array.isArray(result)) {
+    const texts = result
+      .map((block: any) => {
+        if (typeof block === "string") return block;
+        if (block?.text) return String(block.text);
+        if (block?.content) return String(block.content);
+        return "";
+      })
+      .filter(Boolean);
+    if (texts.length > 0) return texts.join("\n");
+  }
+
+  // Handle single object with text or content field
+  if (result?.text) return String(result.text);
+  if (result?.content) return String(result.content);
+  if (result?.message) return String(result.message);
+
+  // Could not extract readable text — don't fall back to JSON.stringify
+  return "";
 }

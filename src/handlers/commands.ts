@@ -7,6 +7,8 @@ import { AgentConfigManager } from "../agents/agent-config.js";
 import { invokeClaude } from "../claude/invoker.js";
 import { startTypingIndicator, sendResponse } from "../utils/telegram.js";
 import { logger } from "../utils/logger.js";
+import { Orchestrator } from "../agents/orchestrator.js";
+import { AgentRegistry } from "../agents/agent-registry.js";
 
 export function registerCommands(
   bot: Bot,
@@ -15,6 +17,8 @@ export function registerCommands(
   projectManager: ProjectManager,
   chatLocks: ChatLocks,
   agentConfig: AgentConfigManager,
+  orchestrator?: Orchestrator,
+  registry?: AgentRegistry,
 ): void {
   bot.command("start", (ctx) => {
     ctx.reply(
@@ -24,6 +28,8 @@ export function registerCommands(
       "/status - Current session info\n" +
       "/reset - Clear conversation session\n" +
       "/cancel - Abort current request\n" +
+      "/kill <n> - Kill worker #n\n" +
+      "/retry <n> - Retry failed worker #n\n" +
       "/model - Show agent model config\n" +
       "/project - Manage projects\n" +
       "/git - Git operations"
@@ -35,7 +41,9 @@ export function registerCommands(
       "*Commands:*\n" +
       "/status - Session & project info\n" +
       "/reset - Clear conversation context\n" +
-      "/cancel - Abort running request\n" +
+      "/cancel - Abort entire orchestration\n" +
+      "/kill <n> - Kill specific worker #n\n" +
+      "/retry <n> - Retry failed/killed worker #n\n" +
       "/model - Show agent model config\n" +
       "/project list - Show projects\n" +
       "/project add <name> <path> - Add project\n" +
@@ -84,6 +92,101 @@ export function registerCommands(
     } else {
       ctx.reply("Nothing to cancel.");
     }
+  });
+
+  // /kill <n> — kill a specific worker by number
+  bot.command("kill", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const arg = (ctx.match as string || "").trim();
+    const workerNumber = parseInt(arg, 10);
+
+    if (!arg || isNaN(workerNumber) || workerNumber < 1) {
+      await ctx.reply("Usage: /kill <worker_number>\nExample: /kill 3");
+      return;
+    }
+
+    if (!registry) {
+      await ctx.reply("Worker management is not available.");
+      return;
+    }
+
+    const orch = registry.getActiveOrchestratorForChat(chatId);
+    if (!orch) {
+      await ctx.reply("No active orchestration running in this chat.");
+      return;
+    }
+
+    const workerEntry = registry.getWorkerByNumber(orch.id, workerNumber);
+    if (!workerEntry) {
+      // List available workers
+      const workers = registry.getWorkersForOrchestrator(orch.id);
+      if (workers.size === 0) {
+        await ctx.reply("No active workers found.");
+        return;
+      }
+      const available = [...workers.values()]
+        .map((w) => `  #${w.workerNumber}: ${w.taskDescription}`)
+        .join("\n");
+      await ctx.reply(`Worker #${workerNumber} not found. Active workers:\n${available}`);
+      return;
+    }
+
+    // Abort just this worker
+    workerEntry.info.controller.abort();
+    await ctx.reply(`🔪 Killed worker #${workerNumber}: ${workerEntry.info.taskDescription}`);
+    logger.info({ chatId, workerNumber, workerId: workerEntry.workerId }, "Worker killed by user");
+  });
+
+  // /retry <n> — retry a failed/killed worker by number
+  bot.command("retry", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const arg = (ctx.match as string || "").trim();
+    const workerNumber = parseInt(arg, 10);
+
+    if (!arg || isNaN(workerNumber) || workerNumber < 1) {
+      await ctx.reply("Usage: /retry <worker_number>\nExample: /retry 3");
+      return;
+    }
+
+    if (!orchestrator || !registry) {
+      await ctx.reply("Worker management is not available.");
+      return;
+    }
+
+    const orch = registry.getActiveOrchestratorForChat(chatId);
+    if (!orch) {
+      await ctx.reply("No active orchestration running in this chat.");
+      return;
+    }
+
+    // Check if we have a retry function available
+    if (!orchestrator._activeRetryFn || orchestrator._activeOrchId !== orch.id) {
+      await ctx.reply("Retry is not available for this orchestration.");
+      return;
+    }
+
+    const workerEntry = registry.getWorkerByNumber(orch.id, workerNumber);
+    if (!workerEntry) {
+      await ctx.reply(`Worker #${workerNumber} not found or was not killed/failed. Only killed or failed workers can be retried.`);
+      return;
+    }
+
+    await ctx.reply(`🔄 Retrying worker #${workerNumber}: ${workerEntry.info.taskDescription}`);
+    logger.info({ chatId, workerNumber }, "Worker retry requested by user");
+
+    // Run retry in background
+    orchestrator._activeRetryFn(workerNumber)
+      .then(async (result) => {
+        if (!result) {
+          await ctx.reply(`Failed to retry worker #${workerNumber}: worker not found.`).catch(() => {});
+          return;
+        }
+        const icon = result.success ? "✅" : "❌";
+        await ctx.reply(`${icon} Retry of worker #${workerNumber} ${result.success ? "succeeded" : "failed"}: ${result.result.slice(0, 500)}`).catch(() => {});
+      })
+      .catch(async (err) => {
+        await ctx.reply(`Retry of worker #${workerNumber} errored: ${err.message}`).catch(() => {});
+      });
   });
 
   bot.command("model", (ctx) => {

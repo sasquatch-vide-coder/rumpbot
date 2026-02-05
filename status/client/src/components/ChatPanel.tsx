@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { sendChatMessage, resetChatSession, getChatHistory } from "../lib/adminApi";
+import { sendChatMessage, getChatHistory } from "../lib/adminApi";
 import type { ChatSSEEvent } from "../lib/adminApi";
 
 interface ChatMessage {
@@ -170,35 +170,8 @@ export function ChatPanel({ token }: { token: string }) {
     }
   };
 
-  const handleReset = async () => {
-    try {
-      await resetChatSession(token);
-      setMessages([]);
-      setStatusText("");
-    } catch {
-      // Silently fail
-    }
-  };
-
   return (
-    <div className="flex flex-col h-[calc(100vh-240px)] md:h-[calc(100vh-220px)] min-h-[500px] w-full max-w-full overflow-hidden">
-      {/* Chat Header */}
-      <div className="flex items-center justify-between mb-4 gap-2">
-        <div className="min-w-0 flex-shrink">
-          <h2 className="text-lg md:text-xl font-bold uppercase font-mono">Web Chat</h2>
-          <p className="text-xs text-brutal-black/50 font-mono uppercase hidden md:block">
-            Direct line to Tiffany
-          </p>
-        </div>
-        <button
-          onClick={handleReset}
-          disabled={isProcessing}
-          className="bg-brutal-orange text-brutal-white font-bold uppercase py-2 px-3 md:px-4 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all text-xs font-mono disabled:opacity-50 flex-shrink-0"
-        >
-          New Session
-        </button>
-      </div>
-
+    <div className="flex flex-col h-[calc(100vh-140px)] md:h-[calc(100vh-120px)] min-h-[500px] w-full max-w-full overflow-hidden">
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden bg-brutal-white brutal-border p-2 md:p-4 space-y-3 mb-4 min-w-0">
         {messages.length === 0 && (

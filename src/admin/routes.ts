@@ -6,6 +6,7 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { AdminAuth } from "./auth.js";
 import { AgentConfigManager } from "../agents/agent-config.js";
+import { BotConfigManager } from "../bot-config-manager.js";
 import { ChatAgent } from "../agents/chat-agent.js";
 import { Orchestrator } from "../agents/orchestrator.js";
 import { SessionManager } from "../claude/session-manager.js";
@@ -47,6 +48,7 @@ export async function registerAdminRoutes(
   envPath: string,
   agentConfig?: AgentConfigManager,
   chatDeps?: ChatDeps,
+  botConfigManager?: BotConfigManager,
 ) {
   // ── Setup endpoint disabled — admin account is created server-side ──
   app.post("/api/admin/setup", async (_request, reply) => {
@@ -59,6 +61,11 @@ export async function registerAdminRoutes(
       isSetUp: auth.isSetUp(),
       mfaEnabled: auth.isMfaEnabled(),
     };
+  });
+
+  // ── Bot Config (public) ──
+  app.get("/api/bot/config", async () => {
+    return { botName: botConfigManager?.getBotName() || "TIFFBOT" };
   });
 
   // ── Login ──
@@ -136,7 +143,7 @@ export async function registerAdminRoutes(
     async () => {
       const secret = new OTPAuth.Secret();
       const totp = new OTPAuth.TOTP({
-        issuer: "TIFFBOT",
+        issuer: botConfigManager?.getBotName() || "TIFFBOT",
         label: "Admin",
         secret,
         algorithm: "SHA1",
@@ -326,7 +333,7 @@ export async function registerAdminRoutes(
 
         let botRunning = false;
         try {
-          const status = execSync("systemctl is-active rumpbot", {
+          const status = execSync("systemctl is-active tiffbot", {
             encoding: "utf-8",
           }).trim();
           botRunning = status === "active";
@@ -417,7 +424,7 @@ export async function registerAdminRoutes(
       return new Promise((resolve) => {
         // Use a small delay so the response can be sent before the process dies
         exec(
-          "sleep 1 && sudo systemctl restart rumpbot 2>&1",
+          "sleep 1 && sudo systemctl restart tiffbot 2>&1",
           { encoding: "utf-8", timeout: 30000 },
           (err, stdout) => {
             if (err) {
@@ -601,6 +608,27 @@ export async function registerAdminRoutes(
 
       await agentConfig.save();
       return { ok: true, config: agentConfig.getAll() };
+    }
+  );
+
+  // ── Bot Config Update ──
+  app.post(
+    "/api/admin/bot/config",
+    { preHandler: authHook },
+    async (request, reply) => {
+      if (!botConfigManager) {
+        reply.code(500).send({ error: "Bot config not available" });
+        return;
+      }
+
+      const body = request.body as { botName?: string };
+
+      if (body.botName !== undefined) {
+        botConfigManager.setBotName(body.botName);
+      }
+
+      await botConfigManager.save();
+      return { ok: true, botName: botConfigManager.getBotName() };
     }
   );
 

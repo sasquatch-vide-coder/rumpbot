@@ -16,6 +16,8 @@ export class WorkerAgent {
     cwd: string;
     abortSignal?: AbortSignal;
     onInvocation?: (raw: any) => void;
+    onActivity?: () => void;
+    onOutput?: (chunk: string) => void;
   }): Promise<WorkerResult> {
     const tierConfig = this.agentConfig.getConfig("worker");
     const systemPrompt = buildWorkerSystemPrompt(opts.task.description);
@@ -36,6 +38,8 @@ export class WorkerAgent {
         model: tierConfig.model,
         maxTurnsOverride: tierConfig.maxTurns,
         timeoutMsOverride: tierConfig.timeoutMs,
+        onActivity: opts.onActivity,
+        onOutput: opts.onOutput,
       });
 
       const duration = Date.now() - startTime;

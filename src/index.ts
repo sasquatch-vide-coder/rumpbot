@@ -9,6 +9,8 @@ import { startStatusServer } from "./status/server.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import { AgentConfigManager } from "./agents/agent-config.js";
+import { BotConfigManager } from "./bot-config-manager.js";
+import { agentRegistry } from "./agents/agent-registry.js";
 import { ChatAgent } from "./agents/chat-agent.js";
 import { Orchestrator } from "./agents/orchestrator.js";
 
@@ -27,12 +29,15 @@ async function main() {
   const agentConfig = new AgentConfigManager(config.dataDir);
   await agentConfig.load();
 
+  const botConfig = new BotConfigManager(config.dataDir);
+  await botConfig.load();
+
   // Load personality for chat agent
   const personalityMd = await readFile(join(process.cwd(), "docs/personality.md"), "utf-8");
 
-  // Create agents
+  // Create agents (uses singleton agentRegistry from agent-registry module)
   const chatAgent = new ChatAgent(config, agentConfig, sessionManager, personalityMd);
-  const orchestrator = new Orchestrator(config, agentConfig, sessionManager);
+  const orchestrator = new Orchestrator(config, agentConfig, sessionManager, agentRegistry);
 
   const bot = createBot(config, sessionManager, projectManager, invocationLogger, chatAgent, orchestrator, agentConfig);
 
@@ -41,6 +46,8 @@ async function main() {
   const statusServer = await startStatusServer(config.dataDir, statusPort, {
     adminJwtSecret: config.adminJwtSecret,
     agentConfig,
+    agentRegistry,
+    botConfigManager: botConfig,
     chatAgent,
     orchestrator,
     sessionManager,
@@ -55,6 +62,7 @@ async function main() {
     await sessionManager.save();
     await projectManager.save();
     await agentConfig.save();
+    await botConfig.save();
     invocationLogger.close();
     closeDatabase();
     logger.info("Shutdown complete");

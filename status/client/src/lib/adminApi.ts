@@ -286,6 +286,19 @@ export function sendChatMessage(
   };
 }
 
+// Bot Config
+export function getBotConfig(token: string) {
+  return request<{ botName: string }>("/bot/config", { token });
+}
+
+export function updateBotConfig(config: { botName: string }, token: string) {
+  return request<{ ok: boolean; botName: string }>("/bot/config", {
+    method: "POST",
+    body: JSON.stringify(config),
+    token,
+  });
+}
+
 export function resetChatSession(token: string) {
   return request<{ ok: boolean }>("/chat/reset", {
     method: "POST",

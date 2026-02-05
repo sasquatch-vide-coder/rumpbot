@@ -38,7 +38,7 @@ export interface OrchestratorSummary {
 }
 
 export interface StatusUpdate {
-  type: "status";
+  type: "status" | "plan_breakdown" | "worker_complete";
   message: string;
   progress?: string;
 }

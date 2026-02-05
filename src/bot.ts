@@ -36,8 +36,8 @@ export function createBot(
   // Rate limit middleware
   bot.use(rateLimitMiddleware(chatLocks));
 
-  // Register commands
-  registerCommands(bot, config, sessionManager, projectManager, chatLocks, agentConfig);
+  // Register commands (pass orchestrator + registry for /kill and /retry support)
+  registerCommands(bot, config, sessionManager, projectManager, chatLocks, agentConfig, orchestrator, orchestrator.getRegistry());
 
   // Default message handler
   bot.on("message:text", (ctx) =>

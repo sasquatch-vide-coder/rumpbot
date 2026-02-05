@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useAdminAuth } from "./useAdminAuth";
 
 interface ServiceStatus {
   status: string;
@@ -46,6 +47,7 @@ export interface StatusData {
 export interface InvocationEntry {
   timestamp: number;
   chatId: number;
+  tier?: "chat" | "orchestrator" | "worker";
   durationMs?: number;
   durationApiMs?: number;
   costUsd?: number;
@@ -55,18 +57,26 @@ export interface InvocationEntry {
   modelUsage?: Record<string, any>;
 }
 
+function authHeaders(token: string | null): HeadersInit {
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 export function useStatus() {
+  const { token } = useAdminAuth();
   const [status, setStatus] = useState<StatusData | null>(null);
   const [invocations, setInvocations] = useState<InvocationEntry[]>([]);
+  const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const statusTimer = useRef<ReturnType<typeof setInterval>>(undefined);
   const invocationsTimer = useRef<ReturnType<typeof setInterval>>(undefined);
+  const logsTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/status");
+      const res = await fetch("/api/status", { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStatus(data);
@@ -78,31 +88,45 @@ export function useStatus() {
       setError(err.message);
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   const fetchInvocations = useCallback(async () => {
     try {
-      const res = await fetch("/api/invocations");
+      const res = await fetch("/api/invocations", { headers: authHeaders(token) });
       if (!res.ok) return;
       const data = await res.json();
       setInvocations(data.invocations || []);
     } catch {
       // Non-critical
     }
-  }, []);
+  }, [token]);
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      const res = await fetch("/api/logs", { headers: authHeaders(token) });
+      if (!res.ok) return;
+      const data = await res.json();
+      setLogs(data.logs || []);
+    } catch {
+      // Non-critical
+    }
+  }, [token]);
 
   useEffect(() => {
     fetchStatus();
     fetchInvocations();
+    fetchLogs();
 
     statusTimer.current = setInterval(fetchStatus, 3000);
     invocationsTimer.current = setInterval(fetchInvocations, 10000);
+    logsTimer.current = setInterval(fetchLogs, 5000);
 
     return () => {
       clearInterval(statusTimer.current);
       clearInterval(invocationsTimer.current);
+      clearInterval(logsTimer.current);
     };
-  }, [fetchStatus, fetchInvocations]);
+  }, [fetchStatus, fetchInvocations, fetchLogs]);
 
-  return { status, invocations, loading, error, connected };
+  return { status, invocations, logs, loading, error, connected };
 }

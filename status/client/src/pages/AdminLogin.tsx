@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useBotName } from "../context/BotConfigContext";
 
 export function AdminLogin() {
   const navigate = useNavigate();
   const { isAuthenticated, loading, loginAdmin, verifyMfaCode } =
     useAdminAuth();
+  const { botName } = useBotName();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -67,7 +69,7 @@ export function AdminLogin() {
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-bold tracking-tight uppercase">
-            TIFFBOT
+            {botName}
           </h1>
           <p className="text-sm mt-1 text-brutal-black/60 uppercase tracking-wide">
             Admin Login

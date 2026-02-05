@@ -9,6 +9,9 @@ import { logger } from "../utils/logger.js";
 import { AdminAuth } from "../admin/auth.js";
 import { registerAdminRoutes } from "../admin/routes.js";
 import { AgentConfigManager } from "../agents/agent-config.js";
+import { BotConfigManager } from "../bot-config-manager.js";
+import { AgentRegistry } from "../agents/agent-registry.js";
+import { registerAgentRoutes } from "./agent-routes.js";
 import { ChatAgent } from "../agents/chat-agent.js";
 import { Orchestrator } from "../agents/orchestrator.js";
 import { SessionManager } from "../claude/session-manager.js";
@@ -177,7 +180,7 @@ function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string; agentConfig?: AgentConfigManager; chatAgent?: ChatAgent; orchestrator?: Orchestrator; sessionManager?: SessionManager; invocationLogger?: InvocationLogger; defaultProjectDir?: string }) {
+export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string; agentConfig?: AgentConfigManager; agentRegistry?: AgentRegistry; botConfigManager?: BotConfigManager; chatAgent?: ChatAgent; orchestrator?: Orchestrator; sessionManager?: SessionManager; invocationLogger?: InvocationLogger; defaultProjectDir?: string }) {
   const app = Fastify({ logger: false });
 
   await app.register(fastifyCors, { origin: true });
@@ -198,7 +201,7 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     invocationLogger: config?.invocationLogger,
     defaultProjectDir: config?.defaultProjectDir,
     webChatStore,
-  });
+  }, config?.botConfigManager);
 
   // Serve built React app
   const clientDist = join(__dirname, "../../status/client/dist");
@@ -212,8 +215,23 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     logger.warn("Status client dist not found, API-only mode");
   }
 
-  // API routes
-  app.get("/api/status", async () => {
+  // Auth middleware for API routes
+  const requireAuth = async (request: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply) => {
+    const authHeader = request.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      reply.code(401).send({ error: "Unauthorized" });
+      return;
+    }
+    const token = authHeader.slice(7);
+    const payload = adminAuth.verifyToken(token);
+    if (!payload || payload.stage !== "full") {
+      reply.code(401).send({ error: "Unauthorized" });
+      return;
+    }
+  };
+
+  // API routes (all require auth)
+  app.get("/api/status", { preHandler: requireAuth }, async () => {
     const [service, system, sessions, projects] = await Promise.all([
       getServiceStatus(),
       getSystemInfo(),
@@ -248,7 +266,7 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     };
   });
 
-  app.get("/api/invocations", async () => {
+  app.get("/api/invocations", { preHandler: requireAuth }, async () => {
     try {
       const rows = getAllInvocations(dataDir);
       // Convert rows to the format expected by the dashboard
@@ -271,7 +289,7 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     }
   });
 
-  app.get("/api/lifetime-stats", async () => {
+  app.get("/api/lifetime-stats", { preHandler: requireAuth }, async () => {
     try {
       const stats = getInvocationStats(dataDir);
       return stats;
@@ -281,7 +299,41 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     }
   });
 
-  app.get("/api/logs", async (request) => {
+  app.get("/api/stats", { preHandler: requireAuth }, async () => {
+    try {
+      const stats = getInvocationStats(dataDir);
+      const rows = getAllInvocations(dataDir);
+
+      // Compute additional aggregate stats
+      const avgCost = stats.totalInvocations > 0 ? stats.totalCost / stats.totalInvocations : 0;
+      const totalDurationMs = rows.reduce((sum, r) => sum + (r.durationMs || 0), 0);
+      const avgDurationMs = stats.totalInvocations > 0 ? totalDurationMs / stats.totalInvocations : 0;
+      const errors = rows.filter((r) => r.isError === 1 || r.isError === true).length;
+
+      // Costs by tier
+      const costsByTier: Record<string, { count: number; cost: number }> = {};
+      for (const row of rows) {
+        const tier = row.tier || "unknown";
+        if (!costsByTier[tier]) costsByTier[tier] = { count: 0, cost: 0 };
+        costsByTier[tier].count++;
+        costsByTier[tier].cost += row.costUsd || 0;
+      }
+
+      return {
+        ...stats,
+        avgCost,
+        avgDurationMs,
+        totalDurationMs,
+        errors,
+        costsByTier,
+      };
+    } catch (err) {
+      logger.error({ err }, "Failed to get stats from SQLite");
+      return { error: "Failed to get stats" };
+    }
+  });
+
+  app.get("/api/logs", { preHandler: requireAuth }, async (request) => {
     const query = request.query as { lines?: string };
     const lines = Math.min(parseInt(query.lines || "50", 10) || 50, 200);
     const logs = await getRecentLogs(lines);
@@ -291,6 +343,11 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
   app.get("/api/health", async () => {
     return { ok: true, timestamp: Date.now() };
   });
+
+  // ── Agent Registry routes (REST + SSE) ──
+  if (config?.agentRegistry) {
+    registerAgentRoutes(app, config.agentRegistry, requireAuth);
+  }
 
   // SPA fallback - serve index.html for non-API routes
   app.setNotFoundHandler(async (request, reply) => {

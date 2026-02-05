@@ -139,6 +139,28 @@ async function orchestrateInBackground(
       cwd: projectDir,
       onStatusUpdate: async (update) => {
         if (!workingMessageId) return;
+
+        // Plan breakdown and worker completion get sent as new messages (they're too long for edits)
+        if (update.type === "plan_breakdown") {
+          try {
+            await ctx.reply(update.message, { parse_mode: "Markdown" });
+          } catch {
+            await ctx.reply(update.message).catch(() => {});
+          }
+          return;
+        }
+
+        if (update.type === "worker_complete") {
+          // Send worker completion with summary as a new message
+          try {
+            await ctx.reply(update.message, { parse_mode: "Markdown" });
+          } catch {
+            await ctx.reply(update.message).catch(() => {});
+          }
+          return;
+        }
+
+        // Regular status updates — edit the working message
         const msg = update.progress ? `${update.message} (${update.progress})` : update.message;
         // Edit the working message with progress
         await editMessage(ctx, workingMessageId, `⏳ ${msg}`).catch(() => {});
