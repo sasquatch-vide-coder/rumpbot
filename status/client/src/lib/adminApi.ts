@@ -4,9 +4,10 @@ async function request<T = Record<string, unknown>>(
   path: string,
   options?: RequestInit & { token?: string }
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const headers: Record<string, string> = {};
+  if (options?.body) {
+    headers["Content-Type"] = "application/json";
+  }
   if (options?.token) {
     headers["Authorization"] = `Bearer ${options.token}`;
   }
@@ -56,6 +57,9 @@ export function getClaudeStatus(token: string) {
     version: string | null;
     authenticated: boolean;
     path: string | null;
+    subscriptionType: string | null;
+    credentialsExist: boolean;
+    setupCommand: string;
   }>("/claude/status", { token });
 }
 
@@ -63,8 +67,31 @@ export function getTelegramStatus(token: string) {
   return request<{
     configured: boolean;
     botRunning: boolean;
+    botToken: string;
+    allowedUserIds: string[];
     allowedUserCount: number;
   }>("/telegram/status", { token });
+}
+
+export function updateTelegramConfig(
+  config: { botToken?: string; allowedUserIds?: string[] },
+  token: string
+) {
+  return request<{ ok: boolean; restartRequired: boolean }>(
+    "/telegram/config",
+    {
+      method: "POST",
+      body: JSON.stringify(config),
+      token,
+    }
+  );
+}
+
+export function restartService(token: string) {
+  return request<{ ok: boolean; output: string }>("/service/restart", {
+    method: "POST",
+    token,
+  });
 }
 
 export function getSSLStatus(token: string) {

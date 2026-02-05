@@ -30,25 +30,9 @@ export async function registerAdminRoutes(
   auth: AdminAuth,
   envPath: string
 ) {
-  // ── Setup (first-time only) ──
-  app.post("/api/admin/setup", async (request, reply) => {
-    if (auth.isSetUp()) {
-      reply.code(400).send({ error: "Admin already set up" });
-      return;
-    }
-    const { username, password } = request.body as {
-      username: string;
-      password: string;
-    };
-    if (!username || !password || password.length < 8) {
-      reply.code(400).send({
-        error: "Username required, password must be at least 8 characters",
-      });
-      return;
-    }
-    await auth.setup(username, password);
-    const token = auth.generateToken("full");
-    return { ok: true, token };
+  // ── Setup endpoint disabled — admin account is created server-side ──
+  app.post("/api/admin/setup", async (_request, reply) => {
+    reply.code(403).send({ error: "Setup is disabled. Admin account must be created server-side." });
   });
 
   // ── Check if setup is needed ──
@@ -199,37 +183,56 @@ export async function registerAdminRoutes(
     "/api/admin/claude/status",
     { preHandler: authHook },
     async () => {
+      const result: {
+        installed: boolean;
+        version: string | null;
+        authenticated: boolean;
+        path: string | null;
+        subscriptionType: string | null;
+        credentialsExist: boolean;
+        setupCommand: string;
+      } = {
+        installed: false,
+        version: null,
+        authenticated: false,
+        path: null,
+        subscriptionType: null,
+        credentialsExist: false,
+        setupCommand: "ssh into server, then run: claude setup-token",
+      };
+
+      // Check if credentials file exists and read subscription info
       try {
-        const version = execSync("claude --version 2>&1", {
+        const credsRaw = await readFile(
+          "/home/ubuntu/.claude/.credentials.json",
+          "utf-8"
+        );
+        result.credentialsExist = true;
+        const creds = JSON.parse(credsRaw);
+        if (creds.claudeAiOauth) {
+          result.subscriptionType = creds.claudeAiOauth.subscriptionType || null;
+          // Check if token is expired
+          const expiresAt = creds.claudeAiOauth.expiresAt;
+          if (expiresAt && Date.now() < expiresAt) {
+            result.authenticated = true;
+          }
+        }
+      } catch {}
+
+      // Check CLI installation
+      try {
+        result.version = execSync("claude --version 2>&1", {
           encoding: "utf-8",
           timeout: 5000,
         }).trim();
+        result.installed = true;
+        result.path = execSync("which claude", {
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+      } catch {}
 
-        let authenticated = false;
-        try {
-          const result = execSync(
-            'claude -p "respond with just the word hello" --output-format json --max-turns 1 2>&1',
-            { encoding: "utf-8", timeout: 30000 }
-          );
-          authenticated = result.includes('"type":"result"');
-        } catch {
-          authenticated = false;
-        }
-
-        return {
-          installed: true,
-          version,
-          authenticated,
-          path: execSync("which claude", { encoding: "utf-8" }).trim(),
-        };
-      } catch {
-        return {
-          installed: false,
-          version: null,
-          authenticated: false,
-          path: null,
-        };
-      }
+      return result;
     }
   );
 
@@ -240,16 +243,16 @@ export async function registerAdminRoutes(
     async () => {
       try {
         const envContent = await readFile(envPath, "utf-8");
-        const hasToken = envContent.includes("TELEGRAM_BOT_TOKEN=");
-        const hasUsers = envContent.includes("ALLOWED_USER_IDS=");
 
-        // Extract user IDs (just the count, not the actual values)
+        const tokenMatch = envContent.match(/TELEGRAM_BOT_TOKEN=(.+)/);
+        const botToken = tokenMatch?.[1]?.trim() || "";
+        const hasToken = botToken.length > 0;
+
         const userMatch = envContent.match(/ALLOWED_USER_IDS=(.+)/);
-        const userCount = userMatch
-          ? userMatch[1].split(",").filter((s) => s.trim()).length
-          : 0;
+        const allowedUserIds = userMatch
+          ? userMatch[1].split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
 
-        // Check if bot service is running
         let botRunning = false;
         try {
           const status = execSync("systemctl is-active rumpbot", {
@@ -258,18 +261,104 @@ export async function registerAdminRoutes(
           botRunning = status === "active";
         } catch {}
 
+        // Mask the token for display (show first 4 and last 4 chars)
+        const maskedToken = hasToken
+          ? botToken.slice(0, 4) + "..." + botToken.slice(-4)
+          : "";
+
         return {
-          configured: hasToken && hasUsers,
+          configured: hasToken && allowedUserIds.length > 0,
           botRunning,
-          allowedUserCount: userCount,
+          botToken: maskedToken,
+          allowedUserIds,
+          allowedUserCount: allowedUserIds.length,
         };
       } catch {
         return {
           configured: false,
           botRunning: false,
+          botToken: "",
+          allowedUserIds: [],
           allowedUserCount: 0,
         };
       }
+    }
+  );
+
+  // ── Telegram Config Update ──
+  app.post(
+    "/api/admin/telegram/config",
+    { preHandler: authHook },
+    async (request, reply) => {
+      const { botToken, allowedUserIds } = request.body as {
+        botToken?: string;
+        allowedUserIds?: string[];
+      };
+
+      if (!botToken && !allowedUserIds) {
+        reply.code(400).send({ error: "Provide botToken or allowedUserIds" });
+        return;
+      }
+
+      try {
+        let envContent = await readFile(envPath, "utf-8");
+
+        if (botToken !== undefined) {
+          if (envContent.match(/TELEGRAM_BOT_TOKEN=.*/)) {
+            envContent = envContent.replace(
+              /TELEGRAM_BOT_TOKEN=.*/,
+              `TELEGRAM_BOT_TOKEN=${botToken}`
+            );
+          } else {
+            envContent = `TELEGRAM_BOT_TOKEN=${botToken}\n` + envContent;
+          }
+        }
+
+        if (allowedUserIds !== undefined) {
+          const idsStr = allowedUserIds.join(",");
+          if (envContent.match(/ALLOWED_USER_IDS=.*/)) {
+            envContent = envContent.replace(
+              /ALLOWED_USER_IDS=.*/,
+              `ALLOWED_USER_IDS=${idsStr}`
+            );
+          } else {
+            envContent += `\nALLOWED_USER_IDS=${idsStr}`;
+          }
+        }
+
+        await writeFile(envPath, envContent);
+        logger.info("Telegram config updated in .env");
+
+        return { ok: true, restartRequired: true };
+      } catch (e) {
+        reply.code(500).send({
+          error: e instanceof Error ? e.message : "Failed to update config",
+        });
+      }
+    }
+  );
+
+  // ── Service Restart ──
+  app.post(
+    "/api/admin/service/restart",
+    { preHandler: authHook },
+    async () => {
+      return new Promise((resolve) => {
+        // Use a small delay so the response can be sent before the process dies
+        exec(
+          "sleep 1 && sudo systemctl restart rumpbot 2>&1",
+          { encoding: "utf-8", timeout: 30000 },
+          (err, stdout) => {
+            if (err) {
+              resolve({ ok: false, output: stdout || err.message });
+              return;
+            }
+            resolve({ ok: true, output: stdout });
+          }
+        );
+        // Resolve immediately since the restart will kill this process
+        setTimeout(() => resolve({ ok: true, output: "Restart initiated" }), 500);
+      });
     }
   );
 
@@ -280,7 +369,7 @@ export async function registerAdminRoutes(
     async () => {
       try {
         const certs = execSync(
-          "sudo certbot certificates --no-color 2>&1",
+          "sudo certbot certificates 2>&1",
           { encoding: "utf-8", timeout: 10000 }
         );
 
@@ -320,7 +409,7 @@ export async function registerAdminRoutes(
     async () => {
       return new Promise((resolve) => {
         exec(
-          "sudo certbot renew --nginx --no-color 2>&1",
+          "sudo certbot renew --nginx 2>&1",
           { encoding: "utf-8", timeout: 60000 },
           (err, stdout) => {
             if (err) {
