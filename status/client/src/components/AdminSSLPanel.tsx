@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getSSLStatus, renewSSL } from "../lib/adminApi";
+import { getSSLStatus, renewSSL, generateSSLCert } from "../lib/adminApi";
 
 interface Props {
   token: string;
@@ -16,7 +16,10 @@ export function AdminSSLPanel({ token }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [renewing, setRenewing] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [renewOutput, setRenewOutput] = useState("");
+  const [newDomain, setNewDomain] = useState("");
+  const [showGenerator, setShowGenerator] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -32,13 +35,33 @@ export function AdminSSLPanel({ token }: Props) {
     try {
       const result = await renewSSL(token);
       setRenewOutput(result.output);
-      // Refresh status
       const updated = await getSSLStatus(token);
       setStatus(updated);
     } catch (e) {
       setRenewOutput(e instanceof Error ? e.message : "Renewal failed");
     } finally {
       setRenewing(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!newDomain.trim()) {
+      setRenewOutput("Domain is required");
+      return;
+    }
+    setGenerating(true);
+    setRenewOutput("");
+    try {
+      const result = await generateSSLCert(newDomain, token);
+      setRenewOutput(result.output);
+      setNewDomain("");
+      setShowGenerator(false);
+      const updated = await getSSLStatus(token);
+      setStatus(updated);
+    } catch (e) {
+      setRenewOutput(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -90,13 +113,41 @@ export function AdminSSLPanel({ token }: Props) {
             </span>
           </div>
 
-          <button
-            onClick={handleRenew}
-            disabled={renewing}
-            className="w-full mt-2 bg-brutal-blue text-brutal-white font-bold uppercase py-2 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all disabled:opacity-50"
-          >
-            {renewing ? "Renewing..." : "Renew Now"}
-          </button>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={handleRenew}
+              disabled={renewing}
+              className="flex-1 bg-brutal-blue text-brutal-white font-bold uppercase py-2 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all disabled:opacity-50 text-xs"
+            >
+              {renewing ? "Renewing..." : "Renew Now"}
+            </button>
+            <button
+              onClick={() => setShowGenerator(!showGenerator)}
+              className="flex-1 bg-brutal-black text-brutal-white font-bold uppercase py-2 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all text-xs"
+            >
+              {showGenerator ? "Cancel" : "New Domain"}
+            </button>
+          </div>
+
+          {showGenerator && (
+            <div className="mt-3 border-t-2 border-brutal-black pt-3 space-y-2">
+              <label className="block text-xs uppercase font-bold">Domain</label>
+              <input
+                type="text"
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                placeholder="example.com"
+                className="w-full p-2 brutal-border font-mono text-sm bg-brutal-bg"
+              />
+              <button
+                onClick={handleGenerate}
+                disabled={generating || !newDomain.trim()}
+                className="w-full bg-brutal-green text-brutal-black font-bold uppercase py-2 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all disabled:opacity-50 text-xs"
+              >
+                {generating ? "Generating..." : "Generate Cert"}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

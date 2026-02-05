@@ -1,5 +1,5 @@
 [Unit]
-Description=Rumpbot Telegram Bot
+Description=TIFFBOT Telegram Bot
 After=network.target
 
 [Service]
@@ -14,7 +14,7 @@ EnvironmentFile=/home/ubuntu/rumpbot/.env
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=rumpbot
+SyslogIdentifier=tiffbot
 
 [Install]
 WantedBy=multi-user.target

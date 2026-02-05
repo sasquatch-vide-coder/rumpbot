@@ -129,6 +129,14 @@ export function renewSSL(token: string) {
   });
 }
 
+export function generateSSLCert(domain: string, token: string) {
+  return request<{ ok: boolean; output: string; domain?: string }>("/ssl/generate", {
+    method: "POST",
+    body: JSON.stringify({ domain }),
+    token,
+  });
+}
+
 export function getMfaSetup(token: string) {
   return request<{ secret: string; uri: string; qrCode: string }>(
     "/mfa/setup",
@@ -159,6 +167,148 @@ export function changePassword(
   return request<{ ok: boolean }>("/change-password", {
     method: "POST",
     body: JSON.stringify({ currentPassword, newPassword }),
+    token,
+  });
+}
+
+// Agent Config
+export interface AgentTierConfig {
+  model: string;
+  maxTurns: number;
+  timeoutMs: number;
+}
+
+export interface AgentConfigData {
+  chat: AgentTierConfig;
+  orchestrator: AgentTierConfig;
+  worker: AgentTierConfig;
+}
+
+export function getAgentConfig(token: string) {
+  return request<AgentConfigData>("/agents/config", { token });
+}
+
+export function updateAgentConfig(
+  config: Partial<{
+    chat: Partial<AgentTierConfig>;
+    orchestrator: Partial<AgentTierConfig>;
+    worker: Partial<AgentTierConfig>;
+  }>,
+  token: string
+) {
+  return request<{ ok: boolean; config: AgentConfigData }>("/agents/config", {
+    method: "POST",
+    body: JSON.stringify(config),
+    token,
+  });
+}
+
+// Chat
+export interface ChatSSEEvent {
+  type: "status" | "chat_response" | "work_complete" | "error" | "done";
+  data: any;
+}
+
+export function sendChatMessage(
+  message: string,
+  token: string,
+  onEvent: (event: ChatSSEEvent) => void
+): { abort: () => void } {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ message }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        onEvent({
+          type: "error",
+          data: { message: (err as Record<string, string>).error || "Request failed" },
+        });
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        onEvent({ type: "error", data: { message: "No response stream" } });
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from the buffer
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let currentEvent = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7);
+          } else if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              onEvent({ type: currentEvent as ChatSSEEvent["type"], data });
+            } catch {
+              // Ignore parse errors
+            }
+            currentEvent = "";
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        onEvent({
+          type: "error",
+          data: { message: err.message || "Connection failed" },
+        });
+      }
+    }
+  })();
+
+  return {
+    abort: () => controller.abort(),
+  };
+}
+
+export function resetChatSession(token: string) {
+  return request<{ ok: boolean }>("/chat/reset", {
+    method: "POST",
+    token,
+  });
+}
+
+export interface ChatHistoryMessage {
+  id: string;
+  role: "user" | "assistant" | "status" | "work_result";
+  text: string;
+  timestamp: number;
+  phase?: string;
+  workMeta?: {
+    overallSuccess: boolean;
+    totalCostUsd: number;
+    workerCount: number;
+  };
+}
+
+export function getChatHistory(token: string) {
+  return request<{ messages: ChatHistoryMessage[] }>("/chat/history", {
+    method: "GET",
     token,
   });
 }

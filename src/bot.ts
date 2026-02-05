@@ -4,16 +4,23 @@ import { authMiddleware } from "./middleware/auth.js";
 import { rateLimitMiddleware, ChatLocks } from "./middleware/rate-limit.js";
 import { registerCommands } from "./handlers/commands.js";
 import { handleMessage } from "./handlers/message.js";
+import { handleMedia } from "./handlers/media.js";
 import { SessionManager } from "./claude/session-manager.js";
 import { ProjectManager } from "./projects/project-manager.js";
 import { InvocationLogger } from "./status/invocation-logger.js";
+import { ChatAgent } from "./agents/chat-agent.js";
+import { Orchestrator } from "./agents/orchestrator.js";
+import { AgentConfigManager } from "./agents/agent-config.js";
 import { logger } from "./utils/logger.js";
 
 export function createBot(
   config: Config,
   sessionManager: SessionManager,
   projectManager: ProjectManager,
-  invocationLogger: InvocationLogger
+  invocationLogger: InvocationLogger,
+  chatAgent: ChatAgent,
+  orchestrator: Orchestrator,
+  agentConfig: AgentConfigManager,
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
   const chatLocks = new ChatLocks();
@@ -30,11 +37,11 @@ export function createBot(
   bot.use(rateLimitMiddleware(chatLocks));
 
   // Register commands
-  registerCommands(bot, config, sessionManager, projectManager, chatLocks);
+  registerCommands(bot, config, sessionManager, projectManager, chatLocks, agentConfig);
 
   // Default message handler
   bot.on("message:text", (ctx) =>
-    handleMessage(ctx, config, sessionManager, projectManager, chatLocks, invocationLogger)
+    handleMessage(ctx, config, sessionManager, projectManager, chatLocks, invocationLogger, chatAgent, orchestrator)
   );
 
   return bot;

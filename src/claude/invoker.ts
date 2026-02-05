@@ -17,6 +17,12 @@ export interface InvokeOptions {
   abortSignal?: AbortSignal;
   config: Config;
   onInvocation?: (raw: any) => void;
+  systemPrompt?: string;
+  model?: string;
+  maxTurnsOverride?: number;
+  timeoutMsOverride?: number;
+  /** Restrict available tools. Empty string disables all tools. */
+  allowedTools?: string;
 }
 
 export async function invokeClaude(opts: InvokeOptions): Promise<ClaudeResult> {
@@ -49,10 +55,22 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
     const args: string[] = [
       "-p", prompt,
       "--output-format", "json",
-      "--max-turns", String(config.maxTurns),
+      "--max-turns", String(opts.maxTurnsOverride ?? config.maxTurns),
       "--verbose",
       "--dangerously-skip-permissions",
     ];
+
+    if (opts.systemPrompt) {
+      args.push("--system-prompt", opts.systemPrompt);
+    }
+
+    if (opts.model) {
+      args.push("--model", opts.model);
+    }
+
+    if (opts.allowedTools !== undefined) {
+      args.push("--tools", opts.allowedTools);
+    }
 
     if (sessionId) {
       args.push("--resume", sessionId);
@@ -78,12 +96,13 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
     });
 
     // Timeout (0 = no timeout)
+    const effectiveTimeout = opts.timeoutMsOverride ?? config.claudeTimeoutMs;
     let timeout: ReturnType<typeof setTimeout> | null = null;
-    if (config.claudeTimeoutMs > 0) {
+    if (effectiveTimeout > 0) {
       timeout = setTimeout(() => {
         proc.kill("SIGTERM");
-        reject(new Error(`Claude CLI timed out after ${config.claudeTimeoutMs}ms`));
-      }, config.claudeTimeoutMs);
+        reject(new Error(`Claude CLI timed out after ${effectiveTimeout}ms`));
+      }, effectiveTimeout);
     }
 
     proc.on("close", (code) => {

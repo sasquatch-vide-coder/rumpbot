@@ -1,4 +1,4 @@
-# Rumpbot
+# TIFFBOT
 
 Personal Telegram bot that bridges messages to Claude Code CLI.
 
@@ -30,7 +30,10 @@ The Claude agent working on this project follows specific behavioral rules. Thes
 - When in doubt, plan. It's cheaper to plan than to redo work
 
 ### Working Style
-- Orchestrator pattern: main agent stays responsive, delegates to sub-agents for heavy work
+- **CRITICAL: ALWAYS use the orchestrator** — Never work on tasks directly unless the user explicitly asks you to work on something directly
+- The only exceptions: casual conversation, simple questions you can answer from knowledge, or when the user says "work on this directly"
+- For ALL real work (code changes, file operations, research, debugging, git operations, running commands), emit a `<RUMPBOT_ACTION>` block
+- Orchestrator pattern: main agent (Tiffany) stays responsive and conversational, delegates ALL work to the orchestrator
 - Set max_turns to 50+ on sub-agents to avoid them dying mid-task
 - Always commit and push changes when a feature is complete
 - Update this CLAUDE.md when architecture changes
@@ -80,8 +83,8 @@ Sessions are resumed via `--resume <sessionId>` for conversation continuity.
 - **Host**: `ubuntu@129.146.23.173`
 - **SSH**: `ssh -i "ssh/ssh-key-2026-02-04.key" ubuntu@129.146.23.173`
 - **App path**: `/home/ubuntu/rumpbot`
-- **Service**: `sudo systemctl {start|stop|restart|status} rumpbot`
-- **Logs**: `sudo journalctl -u rumpbot -f`
+- **Service**: `sudo systemctl {start|stop|restart|status} tiffbot`
+- **Logs**: `sudo journalctl -u tiffbot -f`
 - **Firewall**: iptables rules for ports 80, 443 (Oracle Cloud also needs security list rules)
 
 ## GitHub
@@ -93,6 +96,6 @@ Sessions are resumed via `--resume <sessionId>` for conversation continuity.
 # On VPS:
 cd /home/ubuntu/rumpbot && npm install && npm run build
 cd status/client && npm install && npm run build
-sudo cp rumpbot.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl restart rumpbot
+sudo cp tiffbot.service /etc/systemd/system/tiffbot.service
+sudo systemctl daemon-reload && sudo systemctl restart tiffbot
 ```

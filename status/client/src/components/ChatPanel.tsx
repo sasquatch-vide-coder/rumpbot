@@ -33,7 +33,8 @@ export function ChatPanel({ token }: { token: string }) {
   }, [messages, statusText]);
 
   useEffect(() => {
-    if (!isProcessing) {
+    // Only auto-focus on desktop — mobile browsers zoom in when focusing inputs
+    if (!isProcessing && window.innerWidth >= 768) {
       inputRef.current?.focus();
     }
   }, [isProcessing]);
@@ -239,7 +240,7 @@ export function ChatPanel({ token }: { token: string }) {
           placeholder="Type a message..."
           disabled={isProcessing}
           rows={2}
-          className="flex-1 p-2 md:p-3 brutal-border font-mono text-sm bg-brutal-bg resize-none focus:outline-none focus:ring-2 focus:ring-brutal-black disabled:opacity-50 min-w-0 overflow-x-hidden"
+          className="flex-1 p-2 md:p-3 brutal-border font-mono text-base md:text-sm bg-brutal-bg resize-none focus:outline-none focus:ring-2 focus:ring-brutal-black disabled:opacity-50 min-w-0 overflow-x-hidden"
         />
         {isProcessing ? (
           <button

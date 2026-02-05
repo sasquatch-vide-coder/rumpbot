@@ -3,6 +3,7 @@ import { Config } from "../config.js";
 import { SessionManager } from "../claude/session-manager.js";
 import { ProjectManager } from "../projects/project-manager.js";
 import { ChatLocks } from "../middleware/rate-limit.js";
+import { AgentConfigManager } from "../agents/agent-config.js";
 import { invokeClaude } from "../claude/invoker.js";
 import { startTypingIndicator, sendResponse } from "../utils/telegram.js";
 import { logger } from "../utils/logger.js";
@@ -12,16 +13,18 @@ export function registerCommands(
   config: Config,
   sessionManager: SessionManager,
   projectManager: ProjectManager,
-  chatLocks: ChatLocks
+  chatLocks: ChatLocks,
+  agentConfig: AgentConfigManager,
 ): void {
   bot.command("start", (ctx) => {
     ctx.reply(
-      "Rumpbot is ready. Send me a message and I'll pass it to Claude Code.\n\n" +
+      "TIFFBOT is ready. Send me a message and I'll pass it to Claude Code.\n\n" +
       "Commands:\n" +
       "/help - Show this help\n" +
       "/status - Current session info\n" +
       "/reset - Clear conversation session\n" +
       "/cancel - Abort current request\n" +
+      "/model - Show agent model config\n" +
       "/project - Manage projects\n" +
       "/git - Git operations"
     );
@@ -33,6 +36,7 @@ export function registerCommands(
       "/status - Session & project info\n" +
       "/reset - Clear conversation context\n" +
       "/cancel - Abort running request\n" +
+      "/model - Show agent model config\n" +
       "/project list - Show projects\n" +
       "/project add <name> <path> - Add project\n" +
       "/project switch <name> - Switch project\n" +
@@ -80,6 +84,17 @@ export function registerCommands(
     } else {
       ctx.reply("Nothing to cancel.");
     }
+  });
+
+  bot.command("model", (ctx) => {
+    const cfg = agentConfig.getAll();
+    const lines = [
+      "*Agent Models:*",
+      `Chat: \`${cfg.chat.model}\` (${cfg.chat.maxTurns} turns, ${cfg.chat.timeoutMs === 0 ? "no timeout" : cfg.chat.timeoutMs / 1000 + "s"})`,
+      `Orchestrator: \`${cfg.orchestrator.model}\` (${cfg.orchestrator.maxTurns} turns, ${cfg.orchestrator.timeoutMs === 0 ? "no timeout" : cfg.orchestrator.timeoutMs / 1000 + "s"})`,
+      `Worker: \`${cfg.worker.model}\` (${cfg.worker.maxTurns} turns, ${cfg.worker.timeoutMs === 0 ? "no timeout" : cfg.worker.timeoutMs / 1000 + "s"})`,
+    ];
+    ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   });
 
   // /project command

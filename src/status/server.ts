@@ -8,6 +8,12 @@ import { execSync, exec } from "child_process";
 import { logger } from "../utils/logger.js";
 import { AdminAuth } from "../admin/auth.js";
 import { registerAdminRoutes } from "../admin/routes.js";
+import { AgentConfigManager } from "../agents/agent-config.js";
+import { ChatAgent } from "../agents/chat-agent.js";
+import { Orchestrator } from "../agents/orchestrator.js";
+import { SessionManager } from "../claude/session-manager.js";
+import { InvocationLogger } from "./invocation-logger.js";
+import { WebChatStore } from "../admin/web-chat-store.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -170,7 +176,7 @@ function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string }) {
+export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string; agentConfig?: AgentConfigManager; chatAgent?: ChatAgent; orchestrator?: Orchestrator; sessionManager?: SessionManager; invocationLogger?: InvocationLogger; defaultProjectDir?: string }) {
   const app = Fastify({ logger: false });
 
   await app.register(fastifyCors, { origin: true });
@@ -178,8 +184,20 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
   // Admin auth
   const adminAuth = new AdminAuth(dataDir, config?.adminJwtSecret || "rumpbot-admin-default-secret");
   await adminAuth.load();
+
+  // Web chat persistence
+  const webChatStore = new WebChatStore(dataDir);
+  await webChatStore.load();
+
   const envPath = join(process.cwd(), ".env");
-  await registerAdminRoutes(app, adminAuth, envPath);
+  await registerAdminRoutes(app, adminAuth, envPath, config?.agentConfig, {
+    chatAgent: config?.chatAgent,
+    orchestrator: config?.orchestrator,
+    sessionManager: config?.sessionManager,
+    invocationLogger: config?.invocationLogger,
+    defaultProjectDir: config?.defaultProjectDir,
+    webChatStore,
+  });
 
   // Serve built React app
   const clientDist = join(__dirname, "../../status/client/dist");

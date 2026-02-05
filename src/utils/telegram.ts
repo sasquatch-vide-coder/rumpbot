@@ -61,3 +61,22 @@ export async function sendResponse(ctx: Context, text: string): Promise<void> {
     }
   }
 }
+
+export async function editMessage(
+  ctx: Context,
+  messageId: number,
+  text: string
+): Promise<void> {
+  try {
+    await ctx.api.editMessageText(ctx.chat!.id, messageId, text, {
+      parse_mode: "Markdown",
+    });
+  } catch {
+    // Markdown parse failed, try without parse_mode
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, messageId, text);
+    } catch {
+      // If editing fails (e.g., text is identical), silently ignore
+    }
+  }
+}

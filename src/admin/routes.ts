@@ -3,8 +3,15 @@ import * as OTPAuth from "otpauth";
 import * as QRCode from "qrcode";
 import { execSync, exec } from "child_process";
 import { readFile, writeFile } from "fs/promises";
+import { join } from "path";
 import { AdminAuth } from "./auth.js";
+import { AgentConfigManager } from "../agents/agent-config.js";
+import { ChatAgent } from "../agents/chat-agent.js";
+import { Orchestrator } from "../agents/orchestrator.js";
+import { SessionManager } from "../claude/session-manager.js";
+import { InvocationLogger } from "../status/invocation-logger.js";
 import { logger } from "../utils/logger.js";
+import type { WebChatStore, WebChatMessage } from "./web-chat-store.js";
 
 // Re-export for use elsewhere
 export { AdminAuth };
@@ -25,10 +32,21 @@ function requireAuth(auth: AdminAuth) {
   };
 }
 
+export interface ChatDeps {
+  chatAgent?: ChatAgent;
+  orchestrator?: Orchestrator;
+  sessionManager?: SessionManager;
+  invocationLogger?: InvocationLogger;
+  defaultProjectDir?: string;
+  webChatStore?: WebChatStore;
+}
+
 export async function registerAdminRoutes(
   app: FastifyInstance,
   auth: AdminAuth,
-  envPath: string
+  envPath: string,
+  agentConfig?: AgentConfigManager,
+  chatDeps?: ChatDeps,
 ) {
   // ── Setup endpoint disabled — admin account is created server-side ──
   app.post("/api/admin/setup", async (_request, reply) => {
@@ -118,7 +136,7 @@ export async function registerAdminRoutes(
     async () => {
       const secret = new OTPAuth.Secret();
       const totp = new OTPAuth.TOTP({
-        issuer: "Rumpbot",
+        issuer: "TIFFBOT",
         label: "Admin",
         secret,
         algorithm: "SHA1",
@@ -479,6 +497,39 @@ export async function registerAdminRoutes(
     }
   );
 
+  // ── SSL Generate New Cert ──
+  app.post(
+    "/api/admin/ssl/generate",
+    { preHandler: authHook },
+    async (request, reply) => {
+      const { domain } = request.body as { domain?: string };
+
+      if (!domain || !domain.trim()) {
+        reply.code(400).send({ error: "Domain is required" });
+        return;
+      }
+
+      const cleanDomain = domain.trim().toLowerCase();
+
+      return new Promise((resolve) => {
+        exec(
+          `sudo certbot certonly --nginx -d ${cleanDomain} --non-interactive --agree-tos --no-eff-email --register-unsafely-without-email 2>&1`,
+          { encoding: "utf-8", timeout: 120000 },
+          (err, stdout) => {
+            if (err) {
+              resolve({
+                ok: false,
+                output: stdout || err.message,
+              });
+              return;
+            }
+            resolve({ ok: true, output: stdout, domain: cleanDomain });
+          }
+        );
+      });
+    }
+  );
+
   // ── Change Password ──
   app.post(
     "/api/admin/change-password",
@@ -505,6 +556,298 @@ export async function registerAdminRoutes(
       // Let's just change it
       await auth.changePassword(newPassword);
       return { ok: true };
+    }
+  );
+
+  // ── Agent Config Get ──
+  app.get(
+    "/api/admin/agents/config",
+    { preHandler: authHook },
+    async () => {
+      if (!agentConfig) {
+        return { error: "Agent config not available" };
+      }
+      return agentConfig.getAll();
+    }
+  );
+
+  // ── Agent Config Update ──
+  app.post(
+    "/api/admin/agents/config",
+    { preHandler: authHook },
+    async (request, reply) => {
+      if (!agentConfig) {
+        reply.code(500).send({ error: "Agent config not available" });
+        return;
+      }
+
+      const body = request.body as {
+        chat?: { model?: string; maxTurns?: number; timeoutMs?: number };
+        orchestrator?: { model?: string; maxTurns?: number; timeoutMs?: number };
+        worker?: { model?: string; maxTurns?: number; timeoutMs?: number };
+      };
+
+      if (body.chat?.model) agentConfig.setModel("chat", body.chat.model);
+      if (body.chat?.maxTurns !== undefined) agentConfig.setMaxTurns("chat", body.chat.maxTurns);
+      if (body.chat?.timeoutMs !== undefined) agentConfig.setTimeoutMs("chat", body.chat.timeoutMs);
+
+      if (body.orchestrator?.model) agentConfig.setModel("orchestrator", body.orchestrator.model);
+      if (body.orchestrator?.maxTurns !== undefined) agentConfig.setMaxTurns("orchestrator", body.orchestrator.maxTurns);
+      if (body.orchestrator?.timeoutMs !== undefined) agentConfig.setTimeoutMs("orchestrator", body.orchestrator.timeoutMs);
+
+      if (body.worker?.model) agentConfig.setModel("worker", body.worker.model);
+      if (body.worker?.maxTurns !== undefined) agentConfig.setMaxTurns("worker", body.worker.maxTurns);
+      if (body.worker?.timeoutMs !== undefined) agentConfig.setTimeoutMs("worker", body.worker.timeoutMs);
+
+      await agentConfig.save();
+      return { ok: true, config: agentConfig.getAll() };
+    }
+  );
+
+  // ── Web Chat (SSE) ──
+  // Uses chatId -999 for a dedicated web admin session
+  const WEB_CHAT_ID = -999;
+
+  app.post(
+    "/api/admin/chat",
+    { preHandler: authHook },
+    async (request, reply) => {
+      const { chatAgent, orchestrator, sessionManager, invocationLogger, defaultProjectDir, webChatStore } =
+        chatDeps || {};
+
+      if (!chatAgent || !orchestrator) {
+        reply.code(503).send({ error: "Chat agents not available" });
+        return;
+      }
+
+      const { message } = request.body as { message: string };
+      if (!message?.trim()) {
+        reply.code(400).send({ error: "Message is required" });
+        return;
+      }
+
+      const projectDir = defaultProjectDir || process.cwd();
+
+      // Persist user message
+      if (webChatStore) {
+        await webChatStore.addMessage({
+          id: `user-${Date.now()}`,
+          role: "user",
+          text: message.trim(),
+          timestamp: Date.now(),
+        });
+      }
+
+      // SSE stream
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+
+      const sendEvent = (event: string, data: any) => {
+        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      try {
+        // Phase 1: Chat Agent
+        sendEvent("status", { message: "Thinking...", phase: "chat" });
+
+        const chatResult = await chatAgent.invoke({
+          chatId: WEB_CHAT_ID,
+          prompt: message.trim(),
+          cwd: projectDir,
+          onInvocation: (raw) => {
+            const entry = Array.isArray(raw)
+              ? raw.find((item: any) => item.type === "result") || raw[0]
+              : raw;
+            if (entry && invocationLogger) {
+              invocationLogger.log({
+                timestamp: Date.now(),
+                chatId: WEB_CHAT_ID,
+                tier: "chat",
+                durationMs: entry.durationms || entry.duration_ms,
+                durationApiMs: entry.durationapims || entry.duration_api_ms,
+                costUsd: entry.totalcostusd || entry.total_cost_usd || entry.cost_usd,
+                numTurns: entry.numturns || entry.num_turns,
+                stopReason: entry.subtype || entry.stopreason || entry.stop_reason,
+                isError: entry.iserror || entry.is_error || false,
+                modelUsage: entry.modelUsage || entry.model_usage,
+              }).catch(() => {});
+            }
+          },
+        });
+
+        // Send chat response
+        sendEvent("chat_response", {
+          text: chatResult.chatResponse,
+          hasWork: !!chatResult.workRequest,
+        });
+
+        // Persist assistant message
+        if (webChatStore) {
+          await webChatStore.addMessage({
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            text: chatResult.chatResponse,
+            timestamp: Date.now(),
+          });
+        }
+
+        // Save sessions
+        if (sessionManager) {
+          await sessionManager.save();
+        }
+
+        // Phase 2: If work is needed, orchestrate
+        if (chatResult.workRequest) {
+          sendEvent("status", {
+            message: "Starting work...",
+            phase: "orchestrator",
+          });
+
+          const summary = await orchestrator.execute({
+            chatId: WEB_CHAT_ID,
+            workRequest: chatResult.workRequest,
+            cwd: projectDir,
+            onStatusUpdate: (update) => {
+              sendEvent("status", {
+                message: update.progress
+                  ? `${update.message} (${update.progress})`
+                  : update.message,
+                phase: "orchestrator",
+              });
+            },
+            onInvocation: (raw) => {
+              const entry = Array.isArray(raw)
+                ? raw.find((item: any) => item.type === "result") || raw[0]
+                : raw;
+              if (entry && invocationLogger) {
+                invocationLogger.log({
+                  timestamp: Date.now(),
+                  chatId: WEB_CHAT_ID,
+                  tier: "orchestrator",
+                  durationMs: entry.durationms || entry.duration_ms,
+                  durationApiMs: entry.durationapims || entry.duration_api_ms,
+                  costUsd:
+                    entry.totalcostusd ||
+                    entry.total_cost_usd ||
+                    entry.cost_usd,
+                  numTurns: entry.numturns || entry.num_turns,
+                  stopReason:
+                    entry.subtype || entry.stopreason || entry.stop_reason,
+                  isError: entry.iserror || entry.is_error || false,
+                  modelUsage: entry.modelUsage || entry.model_usage,
+                }).catch(() => {});
+              }
+            },
+          });
+
+          // Get Tiffany-voiced summary via chat agent
+          sendEvent("status", {
+            message: "Summarizing results...",
+            phase: "summary",
+          });
+
+          const summaryPrompt = `Work has been completed. Here's a summary of what was done:\n\n${summary.summary}\n\nOverall success: ${summary.overallSuccess}\nTotal cost: $${summary.totalCostUsd.toFixed(4)}\n\nSummarize this for the user in your own words.`;
+
+          const finalResult = await chatAgent.invoke({
+            chatId: WEB_CHAT_ID,
+            prompt: summaryPrompt,
+            cwd: projectDir,
+            onInvocation: (raw) => {
+              const entry = Array.isArray(raw)
+                ? raw.find((item: any) => item.type === "result") || raw[0]
+                : raw;
+              if (entry && invocationLogger) {
+                invocationLogger.log({
+                  timestamp: Date.now(),
+                  chatId: WEB_CHAT_ID,
+                  tier: "chat",
+                  durationMs: entry.durationms || entry.duration_ms,
+                  durationApiMs: entry.durationapims || entry.duration_api_ms,
+                  costUsd:
+                    entry.totalcostusd ||
+                    entry.total_cost_usd ||
+                    entry.cost_usd,
+                  numTurns: entry.numturns || entry.num_turns,
+                  stopReason:
+                    entry.subtype || entry.stopreason || entry.stop_reason,
+                  isError: entry.iserror || entry.is_error || false,
+                  modelUsage: entry.modelUsage || entry.model_usage,
+                }).catch(() => {});
+              }
+            },
+          });
+
+          const workSummaryText = finalResult.chatResponse || summary.summary;
+          sendEvent("work_complete", {
+            summary: workSummaryText,
+            overallSuccess: summary.overallSuccess,
+            totalCostUsd: summary.totalCostUsd,
+            workerCount: summary.workerResults.length,
+          });
+
+          // Persist work result
+          if (webChatStore) {
+            await webChatStore.addMessage({
+              id: `work-${Date.now()}`,
+              role: "work_result",
+              text: workSummaryText,
+              timestamp: Date.now(),
+              workMeta: {
+                overallSuccess: summary.overallSuccess,
+                totalCostUsd: summary.totalCostUsd,
+                workerCount: summary.workerResults.length,
+              },
+            });
+          }
+
+          if (sessionManager) {
+            await sessionManager.save();
+          }
+        }
+
+        sendEvent("done", { ok: true });
+      } catch (err: any) {
+        logger.error({ err }, "Web chat error");
+        sendEvent("error", {
+          message: err.message || "An error occurred",
+        });
+      } finally {
+        reply.raw.end();
+      }
+    }
+  );
+
+  // ── Web Chat Session Reset ──
+  app.post(
+    "/api/admin/chat/reset",
+    { preHandler: authHook },
+    async () => {
+      const { sessionManager, webChatStore } = chatDeps || {};
+      if (sessionManager) {
+        sessionManager.clear(WEB_CHAT_ID);
+        await sessionManager.save();
+      }
+      if (webChatStore) {
+        await webChatStore.clear();
+      }
+      return { ok: true };
+    }
+  );
+
+  // ── Web Chat History ──
+  app.get(
+    "/api/admin/chat/history",
+    { preHandler: authHook },
+    async () => {
+      const { webChatStore } = chatDeps || {};
+      if (!webChatStore) {
+        return { messages: [] };
+      }
+      return { messages: webChatStore.getMessages() };
     }
   );
 }

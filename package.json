@@ -1,5 +1,5 @@
 {
-  "name": "rumpbot",
+  "name": "tiffbot",
   "version": "1.0.0",
   "description": "Personal AI assistant via Telegram + Claude Code CLI",
   "type": "module",

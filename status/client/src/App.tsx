@@ -18,7 +18,7 @@ function Dashboard() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-4xl md:text-5xl font-bold tracking-tight uppercase">
-              Rumpbot
+              TIFFBOT
             </h1>
             <div className="flex items-center gap-2">
               <div
@@ -81,7 +81,7 @@ function Dashboard() {
 
       {/* Footer */}
       <footer className="mt-10 text-center text-xs text-brutal-black/40 uppercase">
-        Rumpbot Status &mdash; Updated every 3s
+        TIFFBOT Status &mdash; Updated every 3s
       </footer>
     </div>
   );

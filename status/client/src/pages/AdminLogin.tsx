@@ -4,7 +4,7 @@ import { useAdminAuth } from "../hooks/useAdminAuth";
 
 export function AdminLogin() {
   const navigate = useNavigate();
-  const { isAuthenticated, isSetUp, loading, setupAdmin, loginAdmin, verifyMfaCode } =
+  const { isAuthenticated, loading, loginAdmin, verifyMfaCode } =
     useAdminAuth();
 
   const [username, setUsername] = useState("");
@@ -32,23 +32,6 @@ export function AdminLogin() {
       // If no MFA, the auth context will update and redirect happens via useEffect
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters");
-      return;
-    }
-    setError("");
-    setSubmitting(true);
-    try {
-      await setupAdmin(username, password);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Setup failed");
     } finally {
       setSubmitting(false);
     }
@@ -84,10 +67,10 @@ export function AdminLogin() {
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-bold tracking-tight uppercase">
-            Rumpbot
+            TIFFBOT
           </h1>
           <p className="text-sm mt-1 text-brutal-black/60 uppercase tracking-wide">
-            {isSetUp === false ? "Initial Setup" : "Admin Login"}
+            Admin Login
           </p>
         </div>
 
@@ -136,53 +119,7 @@ export function AdminLogin() {
                 Back to login
               </button>
             </form>
-          ) : isSetUp === false ? (
-            /* Setup Form */
-            <form onSubmit={handleSetup}>
-              <h2 className="text-lg font-bold uppercase mb-4">
-                Create Admin Account
-              </h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block font-mono text-xs uppercase font-bold mb-1">
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required
-                    autoFocus
-                    className="w-full brutal-border p-3 font-mono bg-brutal-bg"
-                  />
-                </div>
-                <div>
-                  <label className="block font-mono text-xs uppercase font-bold mb-1">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={8}
-                    className="w-full brutal-border p-3 font-mono bg-brutal-bg"
-                  />
-                  <p className="font-mono text-xs text-brutal-black/40 mt-1">
-                    Minimum 8 characters
-                  </p>
-                </div>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full bg-brutal-green text-brutal-black font-bold uppercase py-3 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all disabled:opacity-50"
-                >
-                  {submitting ? "Creating..." : "Create Account"}
-                </button>
-              </div>
-            </form>
           ) : (
-            /* Login Form */
             <form onSubmit={handleLogin}>
               <h2 className="text-lg font-bold uppercase mb-4">Sign In</h2>
               <div className="space-y-4">
