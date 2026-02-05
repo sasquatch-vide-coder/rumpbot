@@ -22,7 +22,7 @@ async function main() {
 
   // Start status page server
   const statusPort = parseInt(process.env.STATUS_PORT || "3069", 10);
-  const statusServer = await startStatusServer(config.dataDir, statusPort);
+  const statusServer = await startStatusServer(config.dataDir, statusPort, { adminJwtSecret: config.adminJwtSecret });
 
   const shutdown = async () => {
     logger.info("Shutting down...");

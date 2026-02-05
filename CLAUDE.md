@@ -67,6 +67,15 @@ Sessions are resumed via `--resume <sessionId>` for conversation continuity.
 - **Invocation logging**: Claude CLI results logged to `data/invocations.json` for historical metrics
 - **Privacy**: No logs or session details exposed on the public dashboard
 
+### Admin Panel
+- **Auth**: JWT-based with optional TOTP MFA (`src/admin/auth.ts`)
+- **Routes**: `/api/admin/*` endpoints (`src/admin/routes.ts`)
+- **Frontend**: React pages at `/admin` (login) and `/admin/dashboard` (protected)
+- **Panels**: Claude Code status, Telegram status, SSL/TLS management, Security (MFA + password)
+- **Data**: Admin credentials stored in `data/admin.json`
+- **First-time setup**: Visit `/admin` — creates admin account on first use
+- **Config**: `ADMIN_JWT_SECRET` in `.env`
+
 ## Deployment (VPS)
 - **Host**: `ubuntu@129.146.23.173`
 - **SSH**: `ssh -i "ssh/ssh-key-2026-02-04.key" ubuntu@129.146.23.173`

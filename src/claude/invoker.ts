@@ -77,14 +77,17 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
       stderr += chunk.toString();
     });
 
-    // Timeout
-    const timeout = setTimeout(() => {
-      proc.kill("SIGTERM");
-      reject(new Error(`Claude CLI timed out after ${config.claudeTimeoutMs}ms`));
-    }, config.claudeTimeoutMs);
+    // Timeout (0 = no timeout)
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    if (config.claudeTimeoutMs > 0) {
+      timeout = setTimeout(() => {
+        proc.kill("SIGTERM");
+        reject(new Error(`Claude CLI timed out after ${config.claudeTimeoutMs}ms`));
+      }, config.claudeTimeoutMs);
+    }
 
     proc.on("close", (code) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
 
       if (abortSignal?.aborted) {
         reject(new Error("Cancelled"));
@@ -124,7 +127,7 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
     });
 
     proc.on("error", (err) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       reject(err);
     });
   });

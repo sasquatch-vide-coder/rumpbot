@@ -1,29 +1,42 @@
+import { Routes, Route, Link } from "react-router-dom";
 import { useStatus } from "./hooks/useStatus";
 import { ServiceCard } from "./components/ServiceCard";
 import { SystemCard } from "./components/SystemCard";
 import { CostCard } from "./components/CostCard";
+import { AdminAuthProvider } from "./hooks/useAdminAuth";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { AdminLogin } from "./pages/AdminLogin";
+import { AdminDashboard } from "./pages/AdminDashboard";
 
-function App() {
+function Dashboard() {
   const { status, invocations, loading, error, connected } = useStatus();
 
   return (
     <div className="min-h-screen bg-brutal-bg p-6 md:p-10">
       {/* Header */}
       <header className="mb-8">
-        <div className="flex items-center gap-4">
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight uppercase">
-            Rumpbot
-          </h1>
-          <div className="flex items-center gap-2">
-            <div
-              className={`w-3 h-3 rounded-full ${
-                connected ? "bg-brutal-green animate-pulse" : "bg-brutal-red"
-              }`}
-            />
-            <span className="text-xs uppercase font-bold">
-              {connected ? "Live" : "Disconnected"}
-            </span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight uppercase">
+              Rumpbot
+            </h1>
+            <div className="flex items-center gap-2">
+              <div
+                className={`w-3 h-3 rounded-full ${
+                  connected ? "bg-brutal-green animate-pulse" : "bg-brutal-red"
+                }`}
+              />
+              <span className="text-xs uppercase font-bold">
+                {connected ? "Live" : "Disconnected"}
+              </span>
+            </div>
           </div>
+          <Link
+            to="/admin"
+            className="bg-brutal-white text-brutal-black font-bold uppercase py-2 px-4 brutal-border hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none brutal-shadow transition-all text-sm font-mono"
+          >
+            Admin
+          </Link>
         </div>
         <p className="text-sm mt-1 text-brutal-black/60 uppercase tracking-wide">
           Status Dashboard
@@ -71,6 +84,25 @@ function App() {
         Rumpbot Status &mdash; Updated every 3s
       </footer>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AdminAuthProvider>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/admin" element={<AdminLogin />} />
+        <Route
+          path="/admin/dashboard"
+          element={
+            <ProtectedRoute>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </AdminAuthProvider>
   );
 }
 

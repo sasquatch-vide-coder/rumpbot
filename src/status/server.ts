@@ -6,6 +6,8 @@ import { fileURLToPath } from "url";
 import { readFile, stat } from "fs/promises";
 import { execSync, exec } from "child_process";
 import { logger } from "../utils/logger.js";
+import { AdminAuth } from "../admin/auth.js";
+import { registerAdminRoutes } from "../admin/routes.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -168,10 +170,16 @@ function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-export async function startStatusServer(dataDir: string, port: number = 3069) {
+export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string }) {
   const app = Fastify({ logger: false });
 
   await app.register(fastifyCors, { origin: true });
+
+  // Admin auth
+  const adminAuth = new AdminAuth(dataDir, config?.adminJwtSecret || "rumpbot-admin-default-secret");
+  await adminAuth.load();
+  const envPath = join(process.cwd(), ".env");
+  await registerAdminRoutes(app, adminAuth, envPath);
 
   // Serve built React app
   const clientDist = join(__dirname, "../../status/client/dist");

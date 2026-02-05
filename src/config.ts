@@ -8,6 +8,7 @@ export interface Config {
   maxTurns: number;
   claudeTimeoutMs: number;
   dataDir: string;
+  adminJwtSecret: string;
 }
 
 function requireEnv(name: string): string {
@@ -32,7 +33,8 @@ export function loadConfig(): Config {
       process.env.DEFAULT_PROJECT_DIR || process.cwd(),
     claudeCliPath: process.env.CLAUDE_CLI_PATH || "claude",
     maxTurns: parseInt(process.env.MAX_TURNS || "10", 10),
-    claudeTimeoutMs: parseInt(process.env.CLAUDE_TIMEOUT_MS || "300000", 10),
+    claudeTimeoutMs: process.env.CLAUDE_TIMEOUT_MS ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) : 0,
     dataDir: process.env.DATA_DIR || "./data",
+    adminJwtSecret: process.env.ADMIN_JWT_SECRET || "rumpbot-admin-default-secret",
   };
 }
