@@ -19,6 +19,12 @@ The Claude agent working on this project follows specific behavioral rules. Thes
 - Ask clarifying questions one at a time, not batched
 - Don't dump raw output — summarize and explain
 
+### Planning (ALWAYS follow this)
+- Use **planning mode** for any non-trivial task before writing code
+- Plan first, get user approval, then execute
+- Trivial tasks (typo fixes, single-line changes, simple questions) can skip planning
+- When in doubt, plan. It's cheaper to plan than to redo work
+
 ### Working Style
 - Orchestrator pattern: main agent stays responsive, delegates to sub-agents for heavy work
 - Set max_turns to 50+ on sub-agents to avoid them dying mid-task
