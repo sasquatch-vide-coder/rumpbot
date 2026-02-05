@@ -6,12 +6,14 @@ import { registerCommands } from "./handlers/commands.js";
 import { handleMessage } from "./handlers/message.js";
 import { SessionManager } from "./claude/session-manager.js";
 import { ProjectManager } from "./projects/project-manager.js";
+import { InvocationLogger } from "./status/invocation-logger.js";
 import { logger } from "./utils/logger.js";
 
 export function createBot(
   config: Config,
   sessionManager: SessionManager,
-  projectManager: ProjectManager
+  projectManager: ProjectManager,
+  invocationLogger: InvocationLogger
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
   const chatLocks = new ChatLocks();
@@ -32,7 +34,7 @@ export function createBot(
 
   // Default message handler
   bot.on("message:text", (ctx) =>
-    handleMessage(ctx, config, sessionManager, projectManager, chatLocks)
+    handleMessage(ctx, config, sessionManager, projectManager, chatLocks, invocationLogger)
   );
 
   return bot;

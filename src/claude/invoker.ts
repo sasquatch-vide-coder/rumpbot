@@ -16,6 +16,7 @@ export interface InvokeOptions {
   sessionId?: string;
   abortSignal?: AbortSignal;
   config: Config;
+  onInvocation?: (raw: any) => void;
 }
 
 export async function invokeClaude(opts: InvokeOptions): Promise<ClaudeResult> {
@@ -106,7 +107,7 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
       }
 
       try {
-        const parsed = parseClaudeOutput(stdout);
+        const parsed = parseClaudeOutput(stdout, opts.onInvocation);
         resolve(parsed);
       } catch (parseErr) {
         // If JSON parse fails, return raw stdout as result
@@ -129,7 +130,7 @@ function invokeClaudeInternal(opts: InvokeOptions): Promise<ClaudeResult> {
   });
 }
 
-function parseClaudeOutput(raw: string): ClaudeResult {
+function parseClaudeOutput(raw: string, onInvocation?: (raw: any) => void): ClaudeResult {
   // claude --output-format json outputs a JSON object
   // Find the last complete JSON object in the output (may have other output before it)
   const trimmed = raw.trim();
@@ -137,6 +138,7 @@ function parseClaudeOutput(raw: string): ClaudeResult {
   // Try parsing the full output first
   try {
     const data = JSON.parse(trimmed);
+    if (onInvocation) onInvocation(data);
     return extractResult(data);
   } catch {
     // Try to find JSON in the output
@@ -164,6 +166,7 @@ function parseClaudeOutput(raw: string): ClaudeResult {
 
   const jsonStr = trimmed.slice(start, lastClose + 1);
   const data = JSON.parse(jsonStr);
+  if (onInvocation) onInvocation(data);
   return extractResult(data);
 }
 
@@ -179,20 +182,43 @@ function extractResult(data: any): ClaudeResult {
     if (text) {
       return { result: text, sessionId: "", isError: false };
     }
-    return { result: JSON.stringify(data), sessionId: "", isError: false };
+    return { result: "No readable response from Claude.", sessionId: "", isError: true };
   }
 
-  // Handle single result object
-  const result =
-    data.result ||
-    data.content ||
-    JSON.stringify(data);
+  // Handle known subtypes that don't produce readable text
+  if (data.subtype === "errormaxturns") {
+    const turns = data.numturns || data.num_turns || "unknown";
+    const cost = data.totalcostusd || data.total_cost_usd || data.cost_usd;
+    const costStr = cost ? ` (cost: $${Number(cost).toFixed(2)})` : "";
+    return {
+      result: `Claude reached the maximum number of turns (${turns}) for this request${costStr}. The work may be partially complete — try asking about the current state or continue the conversation.`,
+      sessionId: data.sessionid || data.session_id || "",
+      costUsd: cost,
+      duration: data.durationms || data.duration_ms,
+      isError: false,
+    };
+  }
+
+  // Handle single result object — prefer readable text, never fall through to raw JSON
+  const result = data.result || data.content;
+
+  if (!result) {
+    // No readable content — generate a friendly message based on what we know
+    const subtype = data.subtype || data.type || "unknown";
+    return {
+      result: `Claude finished but returned no readable text (type: ${subtype}). The task may still have been completed.`,
+      sessionId: data.sessionid || data.session_id || "",
+      costUsd: data.totalcostusd || data.total_cost_usd || data.cost_usd,
+      duration: data.durationms || data.duration_ms,
+      isError: data.is_error || data.iserror || false,
+    };
+  }
 
   return {
     result: typeof result === "string" ? result : JSON.stringify(result),
-    sessionId: data.session_id || "",
-    costUsd: data.total_cost_usd ?? data.cost_usd,
-    duration: data.duration_ms,
-    isError: data.is_error || false,
+    sessionId: data.sessionid || data.session_id || "",
+    costUsd: data.totalcostusd || data.total_cost_usd || data.cost_usd,
+    duration: data.durationms || data.duration_ms,
+    isError: data.is_error || data.iserror || false,
   };
 }

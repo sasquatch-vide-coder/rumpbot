@@ -4,6 +4,7 @@ import { invokeClaude } from "../claude/invoker.js";
 import { SessionManager } from "../claude/session-manager.js";
 import { ProjectManager } from "../projects/project-manager.js";
 import { ChatLocks } from "../middleware/rate-limit.js";
+import { InvocationLogger } from "../status/invocation-logger.js";
 import { startTypingIndicator, sendResponse } from "../utils/telegram.js";
 import { logger } from "../utils/logger.js";
 
@@ -12,7 +13,8 @@ export async function handleMessage(
   config: Config,
   sessionManager: SessionManager,
   projectManager: ProjectManager,
-  chatLocks: ChatLocks
+  chatLocks: ChatLocks,
+  invocationLogger: InvocationLogger
 ): Promise<void> {
   const chatId = ctx.chat?.id;
   const text = ctx.message?.text;
@@ -37,6 +39,25 @@ export async function handleMessage(
       sessionId,
       abortSignal: controller.signal,
       config,
+      onInvocation: (raw) => {
+        // Extract invocation data from raw CLI response
+        const entry = Array.isArray(raw)
+          ? raw.find((item: any) => item.type === "result") || raw[0]
+          : raw;
+        if (entry) {
+          invocationLogger.log({
+            timestamp: Date.now(),
+            chatId,
+            durationMs: entry.durationms || entry.duration_ms,
+            durationApiMs: entry.durationapims || entry.duration_api_ms,
+            costUsd: entry.totalcostusd || entry.total_cost_usd || entry.cost_usd,
+            numTurns: entry.numturns || entry.num_turns,
+            stopReason: entry.subtype || entry.stopreason || entry.stop_reason,
+            isError: entry.iserror || entry.is_error || false,
+            modelUsage: entry.modelUsage || entry.model_usage,
+          }).catch((err) => logger.error({ err }, "Failed to log invocation"));
+        }
+      },
     });
 
     // Update session

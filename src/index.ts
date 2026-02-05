@@ -3,6 +3,8 @@ import { logger } from "./utils/logger.js";
 import { createBot } from "./bot.js";
 import { SessionManager } from "./claude/session-manager.js";
 import { ProjectManager } from "./projects/project-manager.js";
+import { InvocationLogger } from "./status/invocation-logger.js";
+import { startStatusServer } from "./status/server.js";
 
 async function main() {
   const config = loadConfig();
@@ -10,15 +12,22 @@ async function main() {
 
   const sessionManager = new SessionManager(config.dataDir);
   const projectManager = new ProjectManager(config.dataDir, config.defaultProjectDir);
+  const invocationLogger = new InvocationLogger(config.dataDir);
 
   await sessionManager.load();
   await projectManager.load();
+  await invocationLogger.load();
 
-  const bot = createBot(config, sessionManager, projectManager);
+  const bot = createBot(config, sessionManager, projectManager, invocationLogger);
+
+  // Start status page server
+  const statusPort = parseInt(process.env.STATUS_PORT || "3069", 10);
+  const statusServer = await startStatusServer(config.dataDir, statusPort);
 
   const shutdown = async () => {
     logger.info("Shutting down...");
     await bot.stop();
+    await statusServer.close();
     await sessionManager.save();
     await projectManager.save();
     logger.info("Shutdown complete");
