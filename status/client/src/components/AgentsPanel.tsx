@@ -2,14 +2,13 @@ import { useState, useEffect, useRef } from "react";
 
 interface AgentEntry {
   id: string;
-  role: "orchestrator" | "worker";
+  role: "executor";
   chatId: number;
   description: string;
   phase: string;
   startedAt: number;
   lastActivityAt: number;
   completedAt?: number;
-  parentId?: string;
   success?: boolean;
   costUsd?: number;
   progress?: string;
@@ -148,14 +147,12 @@ function AgentCard({
   const isStale = isActive && timeSinceActivity > 60000;
 
   const phaseColors: Record<string, string> = {
-    planning: "bg-brutal-yellow text-brutal-black",
     executing: "bg-brutal-blue text-brutal-white",
-    summarizing: "bg-brutal-orange text-brutal-white",
     completed: "bg-brutal-green text-brutal-white",
     failed: "bg-brutal-red text-brutal-white",
   };
 
-  const roleIcon = agent.role === "orchestrator" ? "🎯" : "⚙️";
+  const roleIcon = agent.role === "executor" ? "⚡" : "⚙️";
 
   return (
     <div
@@ -219,11 +216,6 @@ function AgentCard({
               ? `Silent for ${formatElapsed(timeSinceActivity)}`
               : "Active"}
           </span>
-          {agent.parentId && (
-            <span className="text-[10px] font-mono text-brutal-black/30">
-              Parent: {agent.parentId.split("-").slice(0, 2).join("-")}
-            </span>
-          )}
         </div>
       )}
 

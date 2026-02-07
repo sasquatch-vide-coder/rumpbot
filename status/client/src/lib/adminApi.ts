@@ -196,8 +196,7 @@ export interface AgentTierConfig {
 
 export interface AgentConfigData {
   chat: AgentTierConfig;
-  orchestrator: AgentTierConfig;
-  worker: AgentTierConfig;
+  executor: AgentTierConfig;
 }
 
 export function getAgentConfig(token: string) {
@@ -207,8 +206,7 @@ export function getAgentConfig(token: string) {
 export function updateAgentConfig(
   config: Partial<{
     chat: Partial<AgentTierConfig>;
-    orchestrator: Partial<AgentTierConfig>;
-    worker: Partial<AgentTierConfig>;
+    executor: Partial<AgentTierConfig>;
   }>,
   token: string
 ) {
@@ -331,7 +329,7 @@ export interface ChatHistoryMessage {
   workMeta?: {
     overallSuccess: boolean;
     totalCostUsd: number;
-    workerCount: number;
+    workerCount?: number;
   };
 }
 

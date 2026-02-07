@@ -11,7 +11,7 @@ interface ChatMessage {
   workMeta?: {
     overallSuccess: boolean;
     totalCostUsd: number;
-    workerCount: number;
+    workerCount?: number;
   };
 }
 
@@ -111,7 +111,7 @@ export function ChatPanel({ token }: { token: string }) {
               workMeta: {
                 overallSuccess: event.data.overallSuccess,
                 totalCostUsd: event.data.totalCostUsd,
-                workerCount: event.data.workerCount,
+                workerCount: event.data.workerCount ?? undefined,
               },
             },
           ]);
@@ -297,9 +297,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <p className="font-mono text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">{message.text}</p>
           {message.workMeta && (
             <div className="flex flex-wrap gap-4 mt-2 text-xs font-mono text-brutal-black/50">
-              <span>
-                Workers: {message.workMeta.workerCount}
-              </span>
+              {message.workMeta.workerCount != null && (
+                <span>
+                  Workers: {message.workMeta.workerCount}
+                </span>
+              )}
               <span>
                 Cost: ${message.workMeta.totalCostUsd.toFixed(4)}
               </span>

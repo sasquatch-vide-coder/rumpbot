@@ -65,7 +65,7 @@ function extractPrimaryModel(modelUsage?: Record<string, any>): string {
   return best.replace("claude-", "").replace("anthropic.", "");
 }
 
-type TierFilter = "all" | "chat" | "orchestrator" | "worker";
+type TierFilter = "all" | "chat" | "executor";
 type StatusFilter = "all" | "success" | "error";
 
 export function CostCard({ invocations }: Props) {
@@ -274,7 +274,7 @@ export function CostCard({ invocations }: Props) {
 
             {/* Tier filters */}
             <div className="flex gap-0">
-              {(["all", "chat", "orchestrator", "worker"] as TierFilter[]).map((t) => (
+              {(["all", "chat", "executor"] as TierFilter[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTierFilter(t)}

@@ -47,7 +47,7 @@ export interface StatusData {
 export interface InvocationEntry {
   timestamp: number;
   chatId: number;
-  tier?: "chat" | "orchestrator" | "worker";
+  tier?: string;
   durationMs?: number;
   durationApiMs?: number;
   costUsd?: number;

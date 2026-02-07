@@ -27,11 +27,10 @@ type TierData = Record<string, TierStats>;
 
 const TIER_COLORS: Record<string, string> = {
   chat: "#339af0",
-  orchestrator: "#9775fa",
-  worker: "#ff922b",
+  executor: "#9775fa",
 };
 
-const TIER_ORDER = ["chat", "orchestrator", "worker"];
+const TIER_ORDER = ["chat", "executor"];
 
 function formatDuration(ms: number): string {
   return (ms / 1000).toFixed(2) + "s";

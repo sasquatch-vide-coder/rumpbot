@@ -140,15 +140,9 @@ export function AdminAgentPanel({ token }: { token: string }) {
             onChange={updateTier("chat")}
           />
           <TierEditor
-            label="Orchestrator"
-            config={config.orchestrator}
-            onChange={updateTier("orchestrator")}
-            showDivider
-          />
-          <TierEditor
-            label="Worker"
-            config={config.worker}
-            onChange={updateTier("worker")}
+            label="Executor"
+            config={config.executor}
+            onChange={updateTier("executor")}
             showDivider
           />
 
