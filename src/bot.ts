@@ -9,7 +9,7 @@ import { SessionManager } from "./claude/session-manager.js";
 import { ProjectManager } from "./projects/project-manager.js";
 import { InvocationLogger } from "./status/invocation-logger.js";
 import { ChatAgent } from "./agents/chat-agent.js";
-import { Orchestrator } from "./agents/orchestrator.js";
+import { Executor } from "./agents/executor.js";
 import { AgentConfigManager } from "./agents/agent-config.js";
 import { PendingResponseManager } from "./pending-responses.js";
 import { MemoryManager } from "./memory-manager.js";
@@ -23,7 +23,7 @@ export function createBot(
   projectManager: ProjectManager,
   invocationLogger: InvocationLogger,
   chatAgent: ChatAgent,
-  orchestrator: Orchestrator,
+  executor: Executor,
   agentConfig: AgentConfigManager,
   pendingResponses?: PendingResponseManager,
   memoryManager?: MemoryManager,
@@ -47,13 +47,13 @@ export function createBot(
   // Register commands (pass all managers for new commands)
   registerCommands(
     bot, config, sessionManager, projectManager, chatLocks, agentConfig,
-    orchestrator, orchestrator.getRegistry(),
+    executor, executor.getRegistry(),
     memoryManager, cronManager, webhookManager, chatAgent,
   );
 
   // Default message handler
   bot.on("message:text", (ctx) =>
-    handleMessage(ctx, config, sessionManager, projectManager, chatLocks, invocationLogger, chatAgent, orchestrator, pendingResponses, memoryManager)
+    handleMessage(ctx, config, sessionManager, projectManager, chatLocks, invocationLogger, chatAgent, executor, pendingResponses, memoryManager)
   );
 
   return bot;

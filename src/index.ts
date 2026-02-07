@@ -12,7 +12,7 @@ import { AgentConfigManager } from "./agents/agent-config.js";
 import { BotConfigManager } from "./bot-config-manager.js";
 import { agentRegistry } from "./agents/agent-registry.js";
 import { ChatAgent } from "./agents/chat-agent.js";
-import { Orchestrator } from "./agents/orchestrator.js";
+import { Executor } from "./agents/executor.js";
 import { PendingResponseManager } from "./pending-responses.js";
 import { MemoryManager } from "./memory-manager.js";
 import { CronManager } from "./cron-manager.js";
@@ -57,15 +57,15 @@ async function main() {
 
   // Create agents (uses singleton agentRegistry from agent-registry module)
   const chatAgent = new ChatAgent(config, agentConfig, sessionManager, personalityMd);
-  const orchestrator = new Orchestrator(config, agentConfig, sessionManager, agentRegistry);
+  const executor = new Executor(config, agentConfig, agentRegistry);
 
   const bot = createBot(
     config, sessionManager, projectManager, invocationLogger,
-    chatAgent, orchestrator, agentConfig,
+    chatAgent, executor, agentConfig,
     pendingResponses, memoryManager, cronManager, webhookManager,
   );
 
-  // Wire cron trigger handler — runs work through the orchestrator, sends results via Telegram
+  // Wire cron trigger handler — runs work through the executor, sends results via Telegram
   cronManager.setTriggerHandler(async (job) => {
     logger.info({ jobId: job.id, chatId: job.chatId, task: job.task }, "Cron job executing");
 
@@ -74,14 +74,12 @@ async function main() {
     try {
       await bot.api.sendMessage(job.chatId, `⏰ Running scheduled task: *${job.name}*`, { parse_mode: "Markdown" });
 
-      const summary = await orchestrator.execute({
+      const result = await executor.execute({
         chatId: job.chatId,
-        workRequest: {
-          type: "work_request" as const,
-          task: job.task,
-          context: `Triggered by cron schedule: ${job.schedule}`,
-          urgency: "normal" as const,
-        },
+        task: job.task,
+        context: `Triggered by cron schedule: ${job.schedule}`,
+        complexity: "moderate",
+        rawMessage: job.task,
         cwd: projectDir,
         onInvocation: (raw) => {
           const entry = Array.isArray(raw)
@@ -91,7 +89,7 @@ async function main() {
             invocationLogger.log({
               timestamp: Date.now(),
               chatId: job.chatId,
-              tier: entry._tier || "cron-worker",
+              tier: entry._tier || "executor",
               durationMs: entry.durationms || entry.duration_ms,
               durationApiMs: entry.durationapims || entry.duration_api_ms,
               costUsd: entry.totalcostusd || entry.total_cost_usd || entry.cost_usd,
@@ -104,15 +102,14 @@ async function main() {
         },
       });
 
-      const icon = summary.overallSuccess ? "✅" : "❌";
-      const msg = `${icon} Scheduled task *${job.name}* completed:\n\n${summary.summary}`;
+      const icon = result.success ? "✅" : "❌";
+      const msg = `${icon} Scheduled task *${job.name}* completed:\n\n${result.result}`;
       await bot.api.sendMessage(job.chatId, msg, { parse_mode: "Markdown" }).catch(async () => {
-        // Fallback without markdown if it fails
-        await bot.api.sendMessage(job.chatId, `${icon} Scheduled task "${job.name}" completed:\n\n${summary.summary}`).catch(() => {});
+        await bot.api.sendMessage(job.chatId, `${icon} Scheduled task "${job.name}" completed:\n\n${result.result}`).catch(() => {});
       });
 
-      job.lastSuccess = summary.overallSuccess;
-      job.lastResult = summary.summary.slice(0, 500);
+      job.lastSuccess = result.success;
+      job.lastResult = result.result.slice(0, 500);
     } catch (err: any) {
       logger.error({ jobId: job.id, err }, "Cron job execution error");
       await bot.api.sendMessage(job.chatId, `❌ Scheduled task "${job.name}" failed: ${err.message}`).catch(() => {});
@@ -133,14 +130,12 @@ async function main() {
         ? `${webhook.task}\n\nWebhook payload:\n${JSON.stringify(payload, null, 2)}`
         : webhook.task;
 
-      const summary = await orchestrator.execute({
+      const result = await executor.execute({
         chatId: webhook.chatId,
-        workRequest: {
-          type: "work_request" as const,
-          task: taskWithPayload,
-          context: `Triggered by webhook: ${webhook.name}`,
-          urgency: "normal" as const,
-        },
+        task: taskWithPayload,
+        context: `Triggered by webhook: ${webhook.name}`,
+        complexity: "moderate",
+        rawMessage: taskWithPayload,
         cwd: projectDir,
         onInvocation: (raw) => {
           const entry = Array.isArray(raw)
@@ -150,7 +145,7 @@ async function main() {
             invocationLogger.log({
               timestamp: Date.now(),
               chatId: webhook.chatId,
-              tier: entry._tier || "webhook-worker",
+              tier: entry._tier || "executor",
               durationMs: entry.durationms || entry.duration_ms,
               durationApiMs: entry.durationapims || entry.duration_api_ms,
               costUsd: entry.totalcostusd || entry.total_cost_usd || entry.cost_usd,
@@ -163,14 +158,14 @@ async function main() {
         },
       });
 
-      const icon = summary.overallSuccess ? "✅" : "❌";
-      const msg = `${icon} Webhook *${webhook.name}* completed:\n\n${summary.summary}`;
+      const icon = result.success ? "✅" : "❌";
+      const msg = `${icon} Webhook *${webhook.name}* completed:\n\n${result.result}`;
       await bot.api.sendMessage(webhook.chatId, msg, { parse_mode: "Markdown" }).catch(async () => {
-        await bot.api.sendMessage(webhook.chatId, `${icon} Webhook "${webhook.name}" completed:\n\n${summary.summary}`).catch(() => {});
+        await bot.api.sendMessage(webhook.chatId, `${icon} Webhook "${webhook.name}" completed:\n\n${result.result}`).catch(() => {});
       });
 
-      webhook.lastSuccess = summary.overallSuccess;
-      webhook.lastResult = summary.summary.slice(0, 500);
+      webhook.lastSuccess = result.success;
+      webhook.lastResult = result.result.slice(0, 500);
     } catch (err: any) {
       logger.error({ webhookId: webhook.id, err }, "Webhook trigger error");
       await bot.api.sendMessage(webhook.chatId, `❌ Webhook "${webhook.name}" failed: ${err.message}`).catch(() => {});
@@ -186,7 +181,7 @@ async function main() {
     agentRegistry,
     botConfigManager: botConfig,
     chatAgent,
-    orchestrator,
+    executor,
     sessionManager,
     invocationLogger,
     defaultProjectDir: config.defaultProjectDir,

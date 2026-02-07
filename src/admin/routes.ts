@@ -10,7 +10,7 @@ import { LoginRateLimiter } from "./rate-limiter.js";
 import { AgentConfigManager } from "../agents/agent-config.js";
 import { BotConfigManager } from "../bot-config-manager.js";
 import { ChatAgent } from "../agents/chat-agent.js";
-import { Orchestrator } from "../agents/orchestrator.js";
+import { Executor } from "../agents/executor.js";
 import { SessionManager } from "../claude/session-manager.js";
 import { InvocationLogger } from "../status/invocation-logger.js";
 import { logger } from "../utils/logger.js";
@@ -51,7 +51,7 @@ function extractJti(request: FastifyRequest, auth: AdminAuth): string | undefine
 
 export interface ChatDeps {
   chatAgent?: ChatAgent;
-  orchestrator?: Orchestrator;
+  executor?: Executor;
   sessionManager?: SessionManager;
   invocationLogger?: InvocationLogger;
   defaultProjectDir?: string;
@@ -652,21 +652,16 @@ export async function registerAdminRoutes(
 
       const body = request.body as {
         chat?: { model?: string; maxTurns?: number; timeoutMs?: number };
-        orchestrator?: { model?: string; maxTurns?: number; timeoutMs?: number };
-        worker?: { model?: string; maxTurns?: number; timeoutMs?: number };
+        executor?: { model?: string; maxTurns?: number; timeoutMs?: number };
       };
 
       if (body.chat?.model) agentConfig.setModel("chat", body.chat.model);
       if (body.chat?.maxTurns !== undefined) agentConfig.setMaxTurns("chat", body.chat.maxTurns);
       if (body.chat?.timeoutMs !== undefined) agentConfig.setTimeoutMs("chat", body.chat.timeoutMs);
 
-      if (body.orchestrator?.model) agentConfig.setModel("orchestrator", body.orchestrator.model);
-      if (body.orchestrator?.maxTurns !== undefined) agentConfig.setMaxTurns("orchestrator", body.orchestrator.maxTurns);
-      if (body.orchestrator?.timeoutMs !== undefined) agentConfig.setTimeoutMs("orchestrator", body.orchestrator.timeoutMs);
-
-      if (body.worker?.model) agentConfig.setModel("worker", body.worker.model);
-      if (body.worker?.maxTurns !== undefined) agentConfig.setMaxTurns("worker", body.worker.maxTurns);
-      if (body.worker?.timeoutMs !== undefined) agentConfig.setTimeoutMs("worker", body.worker.timeoutMs);
+      if (body.executor?.model) agentConfig.setModel("executor", body.executor.model);
+      if (body.executor?.maxTurns !== undefined) agentConfig.setMaxTurns("executor", body.executor.maxTurns);
+      if (body.executor?.timeoutMs !== undefined) agentConfig.setTimeoutMs("executor", body.executor.timeoutMs);
 
       await agentConfig.save();
       auditLogger.log({
@@ -845,10 +840,10 @@ export async function registerAdminRoutes(
     "/api/admin/chat",
     { preHandler: authHook },
     async (request, reply) => {
-      const { chatAgent, orchestrator, sessionManager, invocationLogger, defaultProjectDir, webChatStore } =
+      const { chatAgent, executor, sessionManager, invocationLogger, defaultProjectDir, webChatStore } =
         chatDeps || {};
 
-      if (!chatAgent || !orchestrator) {
+      if (!chatAgent || !executor) {
         reply.code(503).send({ error: "Chat agents not available" });
         return;
       }
@@ -933,23 +928,26 @@ export async function registerAdminRoutes(
           await sessionManager.save();
         }
 
-        // Phase 2: If work is needed, orchestrate
+        // Phase 2: If work is needed, execute
         if (chatResult.workRequest) {
           sendEvent("status", {
             message: "Starting work...",
-            phase: "orchestrator",
+            phase: "executor",
           });
 
-          const summary = await orchestrator.execute({
+          const result = await executor.execute({
             chatId: WEB_CHAT_ID,
-            workRequest: chatResult.workRequest,
+            task: chatResult.workRequest.task,
+            context: chatResult.workRequest.context || "",
+            complexity: chatResult.workRequest.complexity || "moderate",
+            rawMessage: message.trim(),
             cwd: projectDir,
             onStatusUpdate: (update) => {
               sendEvent("status", {
                 message: update.progress
                   ? `${update.message} (${update.progress})`
                   : update.message,
-                phase: "orchestrator",
+                phase: "executor",
               });
             },
             onInvocation: (raw) => {
@@ -960,7 +958,7 @@ export async function registerAdminRoutes(
                 invocationLogger.log({
                   timestamp: Date.now(),
                   chatId: WEB_CHAT_ID,
-                  tier: "orchestrator",
+                  tier: entry._tier || "executor",
                   durationMs: entry.durationms || entry.duration_ms,
                   durationApiMs: entry.durationapims || entry.duration_api_ms,
                   costUsd:
@@ -983,7 +981,7 @@ export async function registerAdminRoutes(
             phase: "summary",
           });
 
-          const summaryPrompt = `Work has been completed. Here's a summary of what was done:\n\n${summary.summary}\n\nOverall success: ${summary.overallSuccess}\nTotal cost: $${summary.totalCostUsd.toFixed(4)}\n\nSummarize this for the user in your own words.`;
+          const summaryPrompt = `Work has been completed. Here's the executor's report:\n\n${result.result}\n\nOverall success: ${result.success}\nDuration: ${Math.round(result.durationMs / 1000)}s\nCost: $${result.costUsd.toFixed(4)}\n\nSummarize this for the user in your own words.`;
 
           const finalResult = await chatAgent.invoke({
             chatId: WEB_CHAT_ID,
@@ -1014,12 +1012,11 @@ export async function registerAdminRoutes(
             },
           });
 
-          const workSummaryText = finalResult.chatResponse || summary.summary;
+          const workSummaryText = finalResult.chatResponse || result.result;
           sendEvent("work_complete", {
             summary: workSummaryText,
-            overallSuccess: summary.overallSuccess,
-            totalCostUsd: summary.totalCostUsd,
-            workerCount: summary.workerResults.length,
+            overallSuccess: result.success,
+            totalCostUsd: result.costUsd,
           });
 
           // Persist work result
@@ -1030,9 +1027,8 @@ export async function registerAdminRoutes(
               text: workSummaryText,
               timestamp: Date.now(),
               workMeta: {
-                overallSuccess: summary.overallSuccess,
-                totalCostUsd: summary.totalCostUsd,
-                workerCount: summary.workerResults.length,
+                overallSuccess: result.success,
+                totalCostUsd: result.costUsd,
               },
             });
           }

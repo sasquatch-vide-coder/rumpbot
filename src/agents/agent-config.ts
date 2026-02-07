@@ -11,8 +11,7 @@ export interface AgentTierConfig {
 
 export interface AgentConfigData {
   chat: AgentTierConfig;
-  orchestrator: AgentTierConfig;
-  worker: AgentTierConfig;
+  executor: AgentTierConfig;
 }
 
 const DEFAULT_CONFIG: AgentConfigData = {
@@ -21,12 +20,7 @@ const DEFAULT_CONFIG: AgentConfigData = {
     maxTurns: 3,
     timeoutMs: 30000,
   },
-  orchestrator: {
-    model: "claude-opus-4-5-20251101",
-    maxTurns: 50,
-    timeoutMs: 0,
-  },
-  worker: {
+  executor: {
     model: "claude-opus-4-5-20251101",
     maxTurns: 50,
     timeoutMs: 0,
@@ -46,10 +40,10 @@ export class AgentConfigManager {
       const raw = await readFile(this.filePath, "utf-8");
       const data = JSON.parse(raw) as Partial<AgentConfigData>;
       // Merge with defaults so new fields are always present
+      // Also handle legacy configs that had orchestrator/worker keys
       this.config = {
         chat: { ...DEFAULT_CONFIG.chat, ...data.chat },
-        orchestrator: { ...DEFAULT_CONFIG.orchestrator, ...data.orchestrator },
-        worker: { ...DEFAULT_CONFIG.worker, ...data.worker },
+        executor: { ...DEFAULT_CONFIG.executor, ...data.executor },
       };
       logger.info("Agent config loaded");
     } catch {

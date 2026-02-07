@@ -11,7 +11,7 @@ export interface WebChatMessage {
   workMeta?: {
     overallSuccess: boolean;
     totalCostUsd: number;
-    workerCount: number;
+    workerCount?: number;
   };
 }
 

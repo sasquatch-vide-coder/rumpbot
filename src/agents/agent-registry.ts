@@ -1,8 +1,8 @@
 import { EventEmitter } from "events";
 import { logger } from "../utils/logger.js";
 
-export type AgentPhase = "planning" | "executing" | "summarizing" | "completed" | "failed";
-export type AgentRole = "orchestrator" | "worker";
+export type AgentPhase = "executing" | "completed" | "failed";
+export type AgentRole = "executor";
 
 export interface AgentEntry {
   id: string;
@@ -13,10 +13,9 @@ export interface AgentEntry {
   startedAt: number;
   lastActivityAt: number;
   completedAt?: number;
-  parentId?: string; // orchestrator ID for workers
   success?: boolean;
   costUsd?: number;
-  progress?: string; // e.g. "2/5 tasks done"
+  progress?: string;
   recentOutput: string[]; // rolling buffer of last N output lines
 }
 
@@ -47,23 +46,13 @@ const COMPLETED_TTL_MS = 300_000; // 5 minutes before auto-removal
 let nextId = 1;
 
 /**
- * In-memory registry that tracks all active orchestrator and worker agents.
+ * In-memory registry that tracks all active executor agents.
  * Emits events when agents are added, updated, or removed so SSE endpoints
  * can stream live updates to the admin panel.
  */
-export interface WorkerAbortInfo {
-  controller: AbortController;
-  taskPrompt: string;
-  taskDescription: string;
-  workerNumber: number;
-}
-
 export class AgentRegistry extends EventEmitter {
   private agents = new Map<string, AgentEntry>();
   private completedHistory: AgentEntry[] = [];
-
-  // Per-worker AbortControllers: orchestratorId -> (workerId -> WorkerAbortInfo)
-  private workerAbortControllers = new Map<string, Map<string, WorkerAbortInfo>>();
 
   generateId(role: AgentRole): string {
     return `${role}-${nextId++}-${Date.now().toString(36)}`;
@@ -183,68 +172,15 @@ export class AgentRegistry extends EventEmitter {
     ).length;
   }
 
-  // --- Per-worker AbortController management ---
-
-  setWorkerAbortController(
-    orchestratorId: string,
-    workerId: string,
-    info: WorkerAbortInfo,
-  ): void {
-    if (!this.workerAbortControllers.has(orchestratorId)) {
-      this.workerAbortControllers.set(orchestratorId, new Map());
-    }
-    this.workerAbortControllers.get(orchestratorId)!.set(workerId, info);
-  }
-
-  getWorkerAbortController(
-    orchestratorId: string,
-    workerId: string,
-  ): WorkerAbortInfo | undefined {
-    return this.workerAbortControllers.get(orchestratorId)?.get(workerId);
-  }
-
-  removeWorkerAbortController(orchestratorId: string, workerId: string): void {
-    this.workerAbortControllers.get(orchestratorId)?.delete(workerId);
-  }
-
-  clearWorkerAbortControllers(orchestratorId: string): void {
-    this.workerAbortControllers.delete(orchestratorId);
-  }
-
   /**
-   * Get all workers for a given orchestrator, with their abort info.
-   * Returns a map of workerId -> WorkerAbortInfo.
+   * Find the active executor for a given chatId.
+   * Returns the executor agent entry if found.
    */
-  getWorkersForOrchestrator(orchestratorId: string): Map<string, WorkerAbortInfo> {
-    return this.workerAbortControllers.get(orchestratorId) || new Map();
-  }
-
-  /**
-   * Find the active orchestrator for a given chatId.
-   * Returns the orchestrator agent entry if found.
-   */
-  getActiveOrchestratorForChat(chatId: number): AgentEntry | undefined {
+  getActiveExecutorForChat(chatId: number): AgentEntry | undefined {
     return [...this.agents.values()].find(
-      (a) => a.role === "orchestrator" && a.chatId === chatId &&
+      (a) => a.role === "executor" && a.chatId === chatId &&
         a.phase !== "completed" && a.phase !== "failed"
     );
-  }
-
-  /**
-   * Find a worker by its worker number (1-based) within an orchestrator's workers.
-   * Returns the workerId and abort info if found.
-   */
-  getWorkerByNumber(
-    orchestratorId: string,
-    workerNumber: number,
-  ): { workerId: string; info: WorkerAbortInfo } | undefined {
-    const workers = this.getWorkersForOrchestrator(orchestratorId);
-    for (const [workerId, info] of workers) {
-      if (info.workerNumber === workerNumber) {
-        return { workerId, info };
-      }
-    }
-    return undefined;
   }
 }
 

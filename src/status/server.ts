@@ -13,7 +13,7 @@ import { BotConfigManager } from "../bot-config-manager.js";
 import { AgentRegistry } from "../agents/agent-registry.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { ChatAgent } from "../agents/chat-agent.js";
-import { Orchestrator } from "../agents/orchestrator.js";
+import { Executor } from "../agents/executor.js";
 import { SessionManager } from "../claude/session-manager.js";
 import { InvocationLogger } from "./invocation-logger.js";
 import { WebChatStore } from "../admin/web-chat-store.js";
@@ -185,7 +185,7 @@ function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string; agentConfig?: AgentConfigManager; agentRegistry?: AgentRegistry; botConfigManager?: BotConfigManager; chatAgent?: ChatAgent; orchestrator?: Orchestrator; sessionManager?: SessionManager; invocationLogger?: InvocationLogger; defaultProjectDir?: string; webhookManager?: WebhookManager }) {
+export async function startStatusServer(dataDir: string, port: number = 3069, config?: { adminJwtSecret: string; agentConfig?: AgentConfigManager; agentRegistry?: AgentRegistry; botConfigManager?: BotConfigManager; chatAgent?: ChatAgent; executor?: Executor; sessionManager?: SessionManager; invocationLogger?: InvocationLogger; defaultProjectDir?: string; webhookManager?: WebhookManager }) {
   const app = Fastify({ logger: false, trustProxy: true });
 
   await app.register(fastifyCors, { origin: true });
@@ -214,7 +214,7 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
   const envPath = join(process.cwd(), ".env");
   await registerAdminRoutes(app, adminAuth, envPath, config?.agentConfig, {
     chatAgent: config?.chatAgent,
-    orchestrator: config?.orchestrator,
+    executor: config?.executor,
     sessionManager: config?.sessionManager,
     invocationLogger: config?.invocationLogger,
     defaultProjectDir: config?.defaultProjectDir,
@@ -582,7 +582,7 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     // Apply the rollback based on config type
     if (type === "agent" && config?.agentConfig) {
       const data = snapshot.data;
-      for (const tier of ["chat", "orchestrator", "worker"] as const) {
+      for (const tier of ["chat", "executor"] as const) {
         if (data[tier]) {
           if (data[tier].model) config.agentConfig.setModel(tier, data[tier].model);
           if (data[tier].maxTurns !== undefined) config.agentConfig.setMaxTurns(tier, data[tier].maxTurns);
@@ -674,7 +674,7 @@ export async function startStatusServer(dataDir: string, port: number = 3069, co
     // Apply agent config
     if (body.agentConfig && config?.agentConfig) {
       const ac = body.agentConfig;
-      for (const tier of ["chat", "orchestrator", "worker"] as const) {
+      for (const tier of ["chat", "executor"] as const) {
         if (ac[tier]) {
           if (ac[tier].model) config.agentConfig.setModel(tier, ac[tier].model);
           if (ac[tier].maxTurns !== undefined) config.agentConfig.setMaxTurns(tier, ac[tier].maxTurns);

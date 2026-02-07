@@ -19,7 +19,7 @@ export interface InvocationEntry {
   numTurns?: number;
   stopReason?: string;
   isError: boolean;
-  tier?: "chat" | "orchestrator" | "worker";
+  tier?: string;
   taskId?: string;
   modelUsage?: Record<string, any>;
 }

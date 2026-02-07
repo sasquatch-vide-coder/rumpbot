@@ -6,7 +6,7 @@ import { ProjectManager } from "../projects/project-manager.js";
 import { ChatLocks } from "../middleware/rate-limit.js";
 import { InvocationLogger } from "../status/invocation-logger.js";
 import { ChatAgent } from "../agents/chat-agent.js";
-import { Orchestrator } from "../agents/orchestrator.js";
+import { Executor } from "../agents/executor.js";
 import { startTypingIndicator, sendResponse } from "../utils/telegram.js";
 import { logger } from "../utils/logger.js";
 import https from "https";
@@ -61,7 +61,7 @@ export async function handleMedia(
   chatLocks: ChatLocks,
   invocationLogger: InvocationLogger,
   chatAgent: ChatAgent,
-  orchestrator: Orchestrator,
+  executor: Executor,
 ): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
@@ -99,8 +99,6 @@ export async function handleMedia(
     const projectDir = projectManager.getActiveProjectDir(chatId) || config.defaultProjectDir;
 
     // Save image to a temp file in the project directory
-    // Claude CLI in this version doesn't support --attach, so we save the file
-    // and let Claude read it from the cwd
     const tempImageName = `temp_image_${Date.now()}.${mediaType === "image/png" ? "png" : "jpg"}`;
     const tempImagePath = join(projectDir, tempImageName);
 
@@ -110,7 +108,7 @@ export async function handleMedia(
     // Build prompt that references the saved image file
     const prompt = `${caption}\n\n[User sent an image file: ${tempImageName}]\n\nPlease analyze this image and respond.`;
 
-    logger.info({ chatId, projectDir, captionLength: caption.length }, "Processing media via three-tier pipeline");
+    logger.info({ chatId, projectDir, captionLength: caption.length }, "Processing media via executor pipeline");
 
     // Step 1: Chat Agent — invoke normally (image file is in cwd)
     const chatResult = await chatAgent.invoke({
@@ -144,13 +142,16 @@ export async function handleMedia(
       await sendResponse(ctx, chatResult.chatResponse);
     }
 
-    // Step 3: If work is needed, orchestrate
+    // Step 3: If work is needed, execute
     if (chatResult.workRequest) {
-      logger.info({ chatId, task: chatResult.workRequest.task }, "Work request detected from media, starting orchestration");
+      logger.info({ chatId, task: chatResult.workRequest.task }, "Work request detected from media, starting execution");
 
-      const summary = await orchestrator.execute({
+      const result = await executor.execute({
         chatId,
-        workRequest: chatResult.workRequest,
+        task: chatResult.workRequest.task,
+        context: chatResult.workRequest.context || "",
+        complexity: chatResult.workRequest.complexity || "moderate",
+        rawMessage: caption,
         cwd: projectDir,
         abortSignal: controller.signal,
         onStatusUpdate: async (update) => {
@@ -167,7 +168,7 @@ export async function handleMedia(
             invocationLogger.log({
               timestamp: Date.now(),
               chatId,
-              tier: "orchestrator",
+              tier: "executor",
               durationMs: entry.durationms || entry.duration_ms,
               durationApiMs: entry.durationapims || entry.duration_api_ms,
               costUsd: entry.totalcostusd || entry.total_cost_usd || entry.cost_usd,
@@ -175,13 +176,13 @@ export async function handleMedia(
               stopReason: entry.subtype || entry.stopreason || entry.stop_reason,
               isError: entry.iserror || entry.is_error || false,
               modelUsage: entry.modelUsage || entry.model_usage,
-            }).catch((err) => logger.error({ err }, "Failed to log orchestrator invocation"));
+            }).catch((err) => logger.error({ err }, "Failed to log executor invocation"));
           }
         },
       });
 
       // Step 4: Get Tiffany-voiced summary of the work
-      const summaryPrompt = `Work has been completed. Here's a summary of what was done:\n\n${summary.summary}\n\nOverall success: ${summary.overallSuccess}\nTotal cost: $${summary.totalCostUsd.toFixed(4)}\n\nSummarize this for the user in your own words.`;
+      const summaryPrompt = `Work has been completed. Here's the executor's report:\n\n${result.result}\n\nOverall success: ${result.success}\nDuration: ${Math.round(result.durationMs / 1000)}s\nCost: $${result.costUsd.toFixed(4)}\n\nSummarize this for the user in your own words.`;
 
       const finalResult = await chatAgent.invoke({
         chatId,
@@ -209,14 +210,14 @@ export async function handleMedia(
         },
       });
 
-      await sendResponse(ctx, finalResult.chatResponse || summary.summary);
+      await sendResponse(ctx, finalResult.chatResponse || result.result);
 
       logger.info({
         chatId,
-        overallSuccess: summary.overallSuccess,
-        workerCount: summary.workerResults.length,
-        totalCostUsd: summary.totalCostUsd,
-      }, "Media orchestration complete");
+        success: result.success,
+        costUsd: result.costUsd,
+        durationMs: result.durationMs,
+      }, "Media execution complete");
     }
 
     // Save sessions

@@ -1,9 +1,8 @@
 /**
- * System prompt builders for the three agent tiers.
+ * System prompt builders for the two agent tiers.
  *
  * - Chat agent (Haiku) — user-facing, Tiffany personality
- * - Orchestrator (Opus) — task planning, no personality
- * - Worker (Opus) — task execution, no personality
+ * - Executor (Opus) — task execution, no personality
  */
 
 /**
@@ -54,7 +53,7 @@ The action block format is:
 
 \`\`\`
 <RUMPBOT_ACTION>
-{"type":"work_request","task":"concise description of what needs to be done","context":"any relevant context from the conversation","urgency":"normal"}
+{"type":"work_request","task":"concise description of what needs to be done","context":"any relevant context from the conversation","urgency":"normal","complexity":"moderate"}
 </RUMPBOT_ACTION>
 \`\`\`
 
@@ -62,6 +61,12 @@ The action block format is:
 
 - \`"quick"\` — Simple, single-step tasks: a single git command, reading one file, checking a status, restarting a service
 - \`"normal"\` — Everything else: multi-step work, code changes, debugging, refactoring, research
+
+### Complexity Levels
+
+- \`"trivial"\` — Single command, read a file, check a status, git operation, simple query
+- \`"moderate"\` — Bug fix, small feature, single-file change, focused debugging
+- \`"complex"\` — Multi-file refactor, new feature, architecture change, anything touching 3+ files
 
 ## Rules
 
@@ -93,91 +98,23 @@ You can emit BOTH an action block AND a memory block in the same response. Memor
 }
 
 /**
- * Builds the system prompt for the Orchestrator agent (Opus, no personality).
- * This agent receives work requests and produces structured execution plans.
+ * Builds the system prompt for the Executor agent (Opus, no personality).
+ * This agent receives a task and executes it directly with full tool access.
+ * It handles its own task decomposition natively.
  */
-export function buildOrchestratorSystemPrompt(): string {
-  return `You are a task orchestrator. No personality. Be precise and functional.
-
-You receive work requests and must output a structured execution plan as JSON.
-
-## Output Format
-
-Your response must be ONLY valid JSON matching this structure — no markdown fences, no commentary, no extra text:
-
-{
-  "type": "plan",
-  "summary": "Brief description of the plan",
-  "workers": [
-    {
-      "id": "worker-1",
-      "description": "What this worker does",
-      "prompt": "The exact prompt to give to the worker agent",
-      "dependsOn": []
-    }
-  ],
-  "sequential": false
-}
-
-## CRITICAL RULES
-
-1. Your ENTIRE response must be a single JSON object. Nothing else.
-2. Do NOT write any text before or after the JSON.
-3. Do NOT use markdown code fences around the JSON.
-4. Do NOT explain, summarize, or comment on the plan.
-5. Do NOT say "Here's the plan" or "Done!" or any other conversational text.
-6. Do NOT attempt to execute, investigate, or do any work yourself. You are a PLANNER only.
-7. You have NO tools. Do not try to read files, run commands, or explore the codebase.
-8. Delegate ALL investigation and execution to worker prompts.
-
-## Guidelines
-
-- Most tasks need 1-3 workers. Only use more if the work is truly parallelizable.
-- If the task is simple, use a single worker. Do not over-decompose.
-- Each worker prompt must be self-contained and specific.
-- Workers have full Claude Code CLI capabilities: file read/write, terminal commands, git, npm, etc.
-- Set \`sequential: true\` if workers must run strictly in order (e.g., build then test). In sequential mode, each worker automatically receives the results from all prior workers, so they can build on previous work.
-- Use \`dependsOn\` for partial ordering in parallel mode — a worker will wait for the listed worker IDs to complete before starting. Workers with dependencies will receive the results from their dependency workers.
-- Worker IDs must be unique strings like "worker-1", "worker-2", etc.
-- The prompt field for each worker should tell the worker exactly what to do, including file paths, commands, and expected outcomes where possible.
-- Workers automatically receive the overall plan context (all task descriptions) so they understand their role in the bigger picture.
-- If a sequential worker fails, remaining workers are automatically skipped (fail-fast). Plan accordingly — put critical tasks first.
-- Each worker has a 5-minute timeout. If a task might be complex, break it into smaller workers rather than one large one.
-- Workers will be automatically retried once if they hit transient errors (rate limits, timeouts, network issues).
-
-## Restart Detection
-
-When generating the summary after workers complete, set \`needsRestart\` to \`true\` in the result if ANY of the following are true:
-- Any worker result mentions that a service restart is needed
-- The work involved building or deploying code that requires a restart
-- Worker outputs contain phrases like "restart needed", "service restart", "restart tiffbot", or "NOTE: Service restart needed"
-
-Workers are PROHIBITED from restarting the tiffbot service directly. The orchestrator is responsible for detecting restart needs from worker outputs and handling the restart safely after all work is complete.
-
-Remember: Output ONLY the JSON object. Your response will be parsed by JSON.parse() directly.
-`;
-}
-
-/**
- * Builds the system prompt for a Worker agent (Opus, no personality).
- * Workers execute a specific task as part of an orchestrator's plan.
- */
-export function buildWorkerSystemPrompt(taskDescription: string): string {
-  return `You are a worker agent executing a specific task as part of a larger plan. No personality. Be direct and precise.
-
-## Your Task
-
-${taskDescription}
+export function buildExecutorSystemPrompt(): string {
+  return `You are an executor agent. No personality. Be direct, precise, and efficient.
 
 ## Instructions
 
-- Complete the task described above.
+- Complete the assigned task fully.
 - Do not explain what you are going to do. Just do it.
 - When finished, report what was done and the outcome.
+- Include file paths changed, commands run, and key results in your report.
 - If something fails, report the failure clearly with error details.
 - If the task is ambiguous, make a reasonable decision and note the assumption.
-- If you receive context about the overall plan and prior worker results, use that information to avoid duplicating work and to build on what's already been done.
-- Your output will be passed to subsequent workers and to the summarizer — include key details, file paths changed, and outcomes so they have context.
+- For complex tasks that would benefit from parallelism, use the built-in Task tool to spawn sub-agents.
+- Keep your final report concise but comprehensive — it will be relayed to the user.
 
 ## ⛔ CRITICAL — SERVICE RESTART PROHIBITION
 
@@ -185,9 +122,31 @@ ${taskDescription}
 **NEVER run \`systemctl stop tiffbot\`, \`systemctl start tiffbot\`, or \`service tiffbot restart\`.**
 You do NOT have permission to restart, stop, or start the tiffbot service under any circumstances.
 
-If a restart is needed after your work (e.g., after a build or deploy), you MUST note it in your result/output like this:
-> **NOTE: Service restart needed.** The orchestrator will handle the restart safely after completing all work.
+If a restart is needed after your work (e.g., after a build or deploy), you MUST note it in your output like this:
+> **NOTE: Service restart needed.**
 
 Do NOT attempt the restart yourself. Just flag it and move on.
+`;
+}
+
+/**
+ * Builds the system prompt for the summary/voicing step.
+ * Takes the executor's raw result and voices it in Tiffany's personality.
+ */
+export function buildSummarySystemPrompt(personalityMd: string): string {
+  return `You are Tiffany, summarizing work that was just completed.
+
+## Your Personality
+
+${personalityMd}
+
+## Instructions
+
+You will receive a technical summary of work that was done. Your job is to:
+1. Summarize it in Tiffany's voice — concise, punchy, Telegram-appropriate.
+2. Highlight what was done and any important outcomes.
+3. If there were failures, mention them clearly.
+4. Keep it SHORT. 2-4 sentences max. No walls of text.
+5. Do NOT emit any action blocks or memory blocks. Just summarize.
 `;
 }
